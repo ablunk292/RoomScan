@@ -45,9 +45,13 @@ struct RoomDetailView: View {
                 )
                 .frame(height: 300)
                 .listRowInsets(EdgeInsets())
-                Text("Tap a pin to open an item, or tap anywhere on the plan to add one there. To add something on top of an item, like a phone on a desk, open the item and tap Add Item on Top.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 6) {
+                    hint("hand.tap", "Tap a numbered pin to see or change that item.")
+                    hint("plus.circle", "Tap an empty spot on the plan to add an item there.")
+                    hint("square.stack.3d.up", "For something on another item, like a phone on a desk, open the desk and tap Add Item on Top.")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 if let url = store.modelURL(for: room) {
                     Button {
                         modelPreviewURL = url
@@ -56,6 +60,24 @@ struct RoomDetailView: View {
                     }
                 }
             }
+
+            Section {
+                Button {
+                    editingItem = EditingItem(item: RoomItem(name: ""), isNew: true)
+                } label: {
+                    Label("Add Existing Item", systemImage: "plus")
+                }
+                Button {
+                    editingItem = EditingItem(item: RoomItem(name: "", isRequested: true), isNew: true)
+                } label: {
+                    Label("Add Customer Request", systemImage: "cart.badge.plus")
+                }
+            } footer: {
+                Text("Existing items are already in the room. Customer requests are things the customer wants added, and they go on the quote.")
+            }
+
+            itemSection("Existing items", room: room, items: room.items.filter { !$0.isRequested })
+            itemSection("Customer requested", room: room, items: room.items.filter(\.isRequested))
 
             Section("Measurements") {
                 LabeledContent("Floor area", value: Units.area(room.area, feet: useFeet))
@@ -69,22 +91,6 @@ struct RoomDetailView: View {
                     LabeledContent("Windows", value: "\(room.openings.filter { $0.kind == .window }.count)")
                 }
                 LabeledContent("Captured with", value: room.method.label)
-            }
-
-            itemSection("Existing items", room: room, items: room.items.filter { !$0.isRequested })
-            itemSection("Customer requested", room: room, items: room.items.filter(\.isRequested))
-
-            Section {
-                Button {
-                    editingItem = EditingItem(item: RoomItem(name: ""), isNew: true)
-                } label: {
-                    Label("Add Item", systemImage: "plus")
-                }
-                Button {
-                    editingItem = EditingItem(item: RoomItem(name: "", isRequested: true), isNew: true)
-                } label: {
-                    Label("Add Requested Item", systemImage: "cart.badge.plus")
-                }
             }
 
             Section("Notes") {
@@ -130,6 +136,14 @@ struct RoomDetailView: View {
                 store.update(updated, in: propertyID)
             }
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private func hint(_ symbol: String, _ text: String) -> some View {
+        Label {
+            Text(text)
+        } icon: {
+            Image(systemName: symbol)
         }
     }
 

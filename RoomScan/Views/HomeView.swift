@@ -33,16 +33,34 @@ struct HomeView: View {
     @State private var nextCapture: CaptureRequest?
     @AppStorage("lidarNoticeShown") private var lidarNoticeShown = false
     @State private var showingLiDARNotice = false
+    @AppStorage("welcomeShown") private var welcomeShown = false
+    @State private var showingWelcome = false
 
     var body: some View {
         NavigationStack(path: $path) {
             List {
                 if store.properties.isEmpty {
-                    ContentUnavailableView(
-                        "No properties yet",
-                        systemImage: "house",
-                        description: Text("Tap + to map a house, apartment or building.")
-                    )
+                    VStack(spacing: 16) {
+                        Image(systemName: "house.and.flag")
+                            .font(.system(size: 48))
+                            .foregroundStyle(.tint)
+                        Text("Start your first walkthrough")
+                            .font(.title3.bold())
+                        Text("Map each room of a house, apartment or building, and let AI document what is inside.")
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(.secondary)
+                        Button {
+                            showingNewProperty = true
+                        } label: {
+                            Label("Start a Walkthrough", systemImage: "plus")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Button("How it works") { showingWelcome = true }
+                    }
+                    .padding(.vertical, 32)
+                    .frame(maxWidth: .infinity)
                     .listRowBackground(Color.clear)
                 }
                 ForEach(store.properties) { property in
@@ -70,7 +88,7 @@ struct HomeView: View {
                     Button {
                         showingNewProperty = true
                     } label: {
-                        Label("New Property", systemImage: "plus")
+                        Label("Start a Walkthrough", systemImage: "plus")
                     }
                 }
             }
@@ -90,9 +108,19 @@ struct HomeView: View {
                 captureScreen(for: request)
             }
             .onAppear {
+                if !welcomeShown {
+                    showingWelcome = true
+                } else if !RoomCaptureSession.isSupported, !lidarNoticeShown {
+                    showingLiDARNotice = true
+                }
+            }
+            .fullScreenCover(isPresented: $showingWelcome, onDismiss: {
+                welcomeShown = true
                 if !RoomCaptureSession.isSupported, !lidarNoticeShown {
                     showingLiDARNotice = true
                 }
+            }) {
+                WelcomeView()
             }
             .alert("This iPhone doesn't have LiDAR", isPresented: $showingLiDARNotice) {
                 Button("OK") { lidarNoticeShown = true }
@@ -166,6 +194,7 @@ struct NewPropertyView: View {
     @State private var address = ""
     @State private var customer = ""
     @State private var firstRoom = "Living Room"
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
@@ -176,9 +205,11 @@ struct NewPropertyView: View {
                     TextField("Customer name (optional)", text: $customer)
                 }
                 Section {
-                    TextField("First room", text: $firstRoom)
+                    TextField("Living Room", text: $firstRoom)
+                } header: {
+                    Text("Room you are starting in")
                 } footer: {
-                    Text("Map each room in turn and tap Next Room as you walk through. Rooms mapped in one go line up into a whole-house floor plan.")
+                    Text("You will map this room first, then tap Next Room as you walk to each of the others. They line up into one floor plan of the whole house.")
                 }
                 AIFocusSection()
                 CaptureModeSection { mode in
@@ -193,8 +224,13 @@ struct NewPropertyView: View {
                     ))
                 }
             }
-            .navigationTitle("New Property")
+            .navigationTitle("New Walkthrough")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
         }
     }
 }
@@ -235,7 +271,16 @@ struct CaptureModeSection: View {
             Button {
                 onChoose(.cornerTap)
             } label: {
-                Label("Map by tapping corners", systemImage: "ruler")
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(lidarAvailable ? "Map by tapping corners" : "Start mapping").font(.headline)
+                        Text("Tap each corner of the room with the camera")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "ruler")
+                }
             }
         } header: {
             Text("Start mapping")

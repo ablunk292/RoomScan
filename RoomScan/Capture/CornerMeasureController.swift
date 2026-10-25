@@ -18,6 +18,10 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     /// AI scans that found something in the room being mapped, so the screen can remind the
     /// user to scan a room they are about to leave.
     @Published private(set) var aiScansThisRoom = 0
+    /// Items the last AI scan added, shown so the user can see them and undo the scan.
+    @Published private(set) var lastAIAdded: [RoomItem] = []
+    /// Whether the camera is tracking well; when not, `status` says what to do about it.
+    @Published private(set) var trackingIsNormal = false
     /// Result of the last AI scan, shown briefly on screen.
     @Published var aiMessage: String?
 
@@ -34,6 +38,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     private var lastPublish: CFTimeInterval = 0
     private var closingSegment: SCNNode?
     private var updatePending = false
+    private var itemNodes: [UUID: SCNNode] = [:]
 
     /// Distance from the last corner to the crosshair, in meters.
     var liveDistance: Double? {
@@ -135,6 +140,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
             let detected = try await ItemDetector.detectItems(inJPEG: photo.jpeg, roomName: roomName,
                                                                 focus: DetectionPresets.shared.activeFocus)
             var added = 0
+            lastAIAdded = []
             for found in detected {
                 let position = photo.worldPosition(x: found.x, y: found.y, in: sceneView.session, floorY: floorY)
                 if isDuplicate(name: found.name, at: position) { continue }
@@ -147,21 +153,43 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
                     photoFileName: photo.closeUp(of: found).flatMap { ItemPhotos.save($0) }
                 )
                 addItem(item, at: position)
+                lastAIAdded.append(item)
                 added += 1
             }
             aiScansThisRoom += 1
             aiMessage = Self.summary(found: detected.count, added: added)
-            if aiScansThisRoom == 1 {
-                aiMessage = (aiMessage ?? "") + " Now scan each wall, and tilt up for ceiling lights, vents and detectors."
-            }
         } catch {
+            lastAIAdded = []
             aiMessage = error.localizedDescription
         }
         let shown = aiMessage
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(7))
-            if self?.aiMessage == shown { self?.aiMessage = nil }
+            try? await Task.sleep(for: .seconds(15))
+            if self?.aiMessage == shown {
+                self?.aiMessage = nil
+                self?.lastAIAdded = []
+            }
         }
+    }
+
+    /// Removes everything the last AI scan added, for when it picked up the wrong things.
+    @MainActor
+    func undoLastAIScan() {
+        let ids = Set(lastAIAdded.map(\.id))
+        guard !ids.isEmpty else { return }
+        for item in items where ids.contains(item.id) {
+            ItemPhotos.delete(item.photoFileName)
+            itemNodes.removeValue(forKey: item.id)?.removeFromParentNode()
+        }
+        items.removeAll { ids.contains($0.id) }
+        aiMessage = "Removed \(ids.count) item\(ids.count == 1 ? "" : "s")."
+        lastAIAdded = []
+        aiScansThisRoom = max(aiScansThisRoom - 1, 0)
+    }
+
+    func dismissAIMessage() {
+        aiMessage = nil
+        lastAIAdded = []
     }
 
     /// What one AI scan did, for the status line.
@@ -179,6 +207,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
             let node = Self.makeItemMarker(detected: item.detectedAutomatically)
             node.simdPosition = position
             sceneView.scene.rootNode.addChildNode(node)
+            itemNodes[item.id] = node
         }
         items.append(item)
     }
@@ -215,6 +244,8 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         cornerNodes = []
         corners = []
         items = []
+        itemNodes = [:]
+        lastAIAdded = []
         aiScansThisRoom = 0
         return true
     }
@@ -267,7 +298,12 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         default:
             message = "Move your phone slowly."
         }
-        DispatchQueue.main.async { self.status = message }
+        let normal: Bool
+        if case .normal = camera.trackingState { normal = true } else { normal = false }
+        DispatchQueue.main.async {
+            self.status = message
+            self.trackingIsNormal = normal
+        }
     }
 
     /// The floor is the lowest large flat surface well below the phone. Once known, the

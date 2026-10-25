@@ -18,6 +18,7 @@ struct CornerMeasureScreen: View {
     @State private var confirmingCancel = false
     /// Set when the user is leaving a room the AI has not looked at yet.
     @State private var aiReminder: LeaveAction?
+    @State private var showingHelp = false
 
     private enum LeaveAction: Identifiable {
         case nextRoom
@@ -130,16 +131,107 @@ struct CornerMeasureScreen: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(controller.allRooms(currentName: roomName).isEmpty)
             }
-            Text(controller.aiMessage ?? (controller.aimPoint == nil
-                ? "Point the phone down at the floor and move slowly until the crosshair ring appears."
-                : controller.status))
-                .font(.subheadline)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(.ultraThinMaterial, in: Capsule())
-                .onTapGesture { controller.aiMessage = nil }
+            guideCard
+            if let message = controller.aiMessage {
+                aiBanner(message)
+            }
         }
+        .sheet(isPresented: $showingHelp) {
+            ScanHelpView()
+        }
+    }
+
+    // MARK: Guide
+
+    private struct Step {
+        let number: Int
+        let title: String
+        let detail: String
+    }
+
+    /// Where the user is in mapping this room, and what to do next.
+    private var step: Step {
+        let corners = controller.corners.count
+        let warning = controller.trackingIsNormal ? nil : controller.status
+        if controller.aimPoint == nil {
+            return Step(number: 1, title: "Find the floor",
+                        detail: warning ?? "Point the phone down at the floor and move it slowly side to side until a ring appears under the +.")
+        }
+        if corners < 3 {
+            let detail = corners == 0
+                ? "Aim the + at a corner where two walls meet the floor, then tap Add Corner."
+                : "Corner \(corners) added. Follow the wall to the next corner, aim the + at it and tap Add Corner."
+            return Step(number: 2, title: "Mark the corners", detail: warning ?? detail)
+        }
+        if controller.aiScansThisRoom == 0 {
+            let detail = APIKeyStore.hasKey
+                ? "Add any remaining corners. Then point at one wall and tap AI Find Items."
+                : "Add any remaining corners. Then aim the + at each item on the floor and tap the pin button. (Add a Claude key in Settings to let AI find items.)"
+            return Step(number: 3, title: "Find the items", detail: warning ?? detail)
+        }
+        return Step(number: 4, title: "Finish this room",
+                    detail: warning ?? "Scan the other walls and tilt up for the ceiling with AI Find Items. Then tap Next Room, or Done if this was the last room.")
+    }
+
+    private var guideCard: some View {
+        let step = step
+        return HStack(alignment: .top, spacing: 12) {
+            Text("\(step.number)")
+                .font(.headline)
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(Color.accentColor))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Step \(step.number) of 4 · \(step.title)")
+                    .font(.subheadline.bold())
+                Text(step.detail)
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            Button {
+                showingHelp = true
+            } label: {
+                Image(systemName: "questionmark.circle")
+                    .font(.title3)
+            }
+            .accessibilityLabel("How to scan")
+        }
+        .padding(12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .animation(.default, value: step.number)
+    }
+
+    /// What the last AI scan did, with the items it added and a way to take them back.
+    private func aiBanner(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top) {
+                Label(message, systemImage: "sparkles")
+                    .font(.subheadline.weight(.semibold))
+                Spacer(minLength: 0)
+                Button {
+                    controller.dismissAIMessage()
+                } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+            }
+            if !controller.lastAIAdded.isEmpty {
+                Text(controller.lastAIAdded.map(\.name).joined(separator: ", "))
+                    .font(.caption)
+                    .lineLimit(3)
+                HStack {
+                    Text("Wrong items? Undo, or change what AI looks for below.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button("Undo") { controller.undoLastAIScan() }
+                        .font(.caption.bold())
+                        .buttonStyle(.bordered)
+                }
+            }
+        }
+        .padding(12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
     }
 
     private var bottomBar: some View {
@@ -165,14 +257,17 @@ struct CornerMeasureScreen: View {
                 } label: {
                     Group {
                         if controller.isAnalyzing {
-                            ProgressView()
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("AI is looking…")
+                            }
                         } else {
                             Label("AI Find Items", systemImage: "sparkles")
                         }
                     }
                     .frame(maxWidth: .infinity, minHeight: 36)
                 }
-                .buttonStyle(.bordered)
+                .modifier(Emphasized(on: step.number == 3))
                 .disabled(controller.isAnalyzing)
 
                 Button {
@@ -181,7 +276,7 @@ struct CornerMeasureScreen: View {
                     Label("Next Room", systemImage: "arrow.right.square")
                         .frame(maxWidth: .infinity, minHeight: 36)
                 }
-                .buttonStyle(.bordered)
+                .modifier(Emphasized(on: step.number == 4))
                 .disabled(controller.corners.count < 3)
             }
 
@@ -202,7 +297,7 @@ struct CornerMeasureScreen: View {
                         .font(.headline)
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(.borderedProminent)
+                .modifier(Emphasized(on: step.number <= 2))
                 .disabled(controller.aimPoint == nil)
 
                 Button {
@@ -247,4 +342,18 @@ struct ARViewContainer: UIViewRepresentable {
 
     func makeUIView(context: Context) -> ARSCNView { view }
     func updateUIView(_ uiView: ARSCNView, context: Context) {}
+}
+
+/// Fills the button for the step the user is on, so the next thing to tap stands out.
+private struct Emphasized: ViewModifier {
+    let on: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if on {
+            content.buttonStyle(.borderedProminent)
+        } else {
+            content.buttonStyle(.bordered)
+        }
+    }
 }

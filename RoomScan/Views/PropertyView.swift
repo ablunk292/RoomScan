@@ -52,6 +52,17 @@ struct PropertyView: View {
                 }
             }
 
+            if !property.rooms.isEmpty, property.requestedCount == 0 {
+                Section {
+                    Label("Open each room below to check what the AI found and fix anything it missed.", systemImage: "1.circle.fill")
+                    Label("Add what the customer asked for with Add Customer Request.", systemImage: "2.circle.fill")
+                    Label("Tap Export Findings to share a report or send it for quoting.", systemImage: "3.circle.fill")
+                } header: {
+                    Text("Next steps")
+                }
+                .font(.subheadline)
+            }
+
             Section {
                 if !property.address.isEmpty {
                     LabeledContent("Address", value: property.address)
