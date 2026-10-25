@@ -198,6 +198,32 @@ private struct PresetEditor: View {
     }
 }
 
+/// Form section for choosing the AI preset before a walkthrough starts.
+struct AIFocusSection: View {
+    @ObservedObject private var store = DetectionPresets.shared
+    @State private var choosing = false
+
+    var body: some View {
+        Section {
+            Button {
+                choosing = true
+            } label: {
+                LabeledContent {
+                    Text(store.activeName).lineLimit(1)
+                } label: {
+                    Label("AI looks for", systemImage: "sparkles")
+                }
+            }
+            .foregroundStyle(.primary)
+        } footer: {
+            Text("Choose a preset, or describe what AI Find Items should pick up. You can change it any time during the scan with the AI looks for button.")
+        }
+        .sheet(isPresented: $choosing) {
+            AIFocusPicker()
+        }
+    }
+}
+
 /// Small button showing what AI Find Items is set to look for; opens the picker.
 struct AIFocusButton: View {
     @ObservedObject private var store = DetectionPresets.shared

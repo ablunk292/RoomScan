@@ -180,6 +180,7 @@ struct NewPropertyView: View {
                 } footer: {
                     Text("Map each room in turn and tap Next Room as you walk through. Rooms mapped in one go line up into a whole-house floor plan.")
                 }
+                AIFocusSection()
                 CaptureModeSection { mode in
                     let trimmedName = name.trimmingCharacters(in: .whitespaces)
                     let trimmedRoom = firstRoom.trimmingCharacters(in: .whitespaces)

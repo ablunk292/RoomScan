@@ -15,6 +15,9 @@ struct PropertyView: View {
     @State private var sharing: SharePayload?
     @State private var editingDetails = false
     @State private var exportError: String?
+    @State private var choosingExport = false
+    /// Files made in the export sheet, shared once that sheet has closed.
+    @State private var pendingShare: SharePayload?
 
     var body: some View {
         if let property = store.property(id: propertyID) {
@@ -71,12 +74,12 @@ struct PropertyView: View {
 
             Section {
                 Button {
-                    export(property)
+                    choosingExport = true
                 } label: {
-                    Label("Export All Findings", systemImage: "square.and.arrow.up.on.square")
+                    Label("Export Findings", systemImage: "square.and.arrow.up.on.square")
                 }
             } footer: {
-                Text("Creates a PDF report with floor plans, a spreadsheet of every item, and a data file for quoting tools such as QuoteMaster.")
+                Text("Choose the rooms and findings to include. Creates a PDF report with floor plans and photos, a spreadsheet of the items, and a data file for quoting tools such as QuoteMaster.")
             }
 
             Section("Rooms") {
@@ -115,9 +118,9 @@ struct PropertyView: View {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Button {
-                        export(property)
+                        choosingExport = true
                     } label: {
-                        Label("Export All Findings", systemImage: "doc.richtext")
+                        Label("Export Findings", systemImage: "doc.richtext")
                     }
                     ShareLink(item: PropertyReport.text(for: property, useFeet: useFeet)) {
                         Label("Share Text Summary", systemImage: "text.alignleft")
@@ -132,6 +135,14 @@ struct PropertyView: View {
         }
         .navigationDestination(item: $openRoom) { roomID in
             RoomDetailView(propertyID: propertyID, roomID: roomID)
+        }
+        .sheet(isPresented: $choosingExport, onDismiss: {
+            sharing = pendingShare
+            pendingShare = nil
+        }) {
+            ExportOptionsView(property: property) { chosen, options in
+                export(chosen, options: options)
+            }
         }
         .sheet(item: $sharing) { payload in
             ShareSheet(items: payload.urls)
@@ -158,6 +169,7 @@ struct PropertyView: View {
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
+                    AIFocusSection()
                     CaptureModeSection { mode in
                         nextMode = mode
                         showingAddRooms = false
@@ -166,15 +178,15 @@ struct PropertyView: View {
                 .navigationTitle("Add Rooms")
                 .navigationBarTitleDisplayMode(.inline)
             }
-            .presentationDetents([.medium])
+            .presentationDetents([.medium, .large])
         }
     }
 }
 
 extension PropertyView {
-    private func export(_ property: Property) {
+    private func export(_ property: Property, options: ExportFiles.Options) {
         do {
-            sharing = SharePayload(urls: try ExportFiles.make(for: property, useFeet: useFeet))
+            pendingShare = SharePayload(urls: try ExportFiles.make(for: property, useFeet: useFeet, options: options))
         } catch {
             exportError = error.localizedDescription
         }

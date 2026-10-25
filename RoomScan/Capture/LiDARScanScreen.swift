@@ -43,6 +43,8 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
     /// Items the AI found in the room being scanned; added to it once RoomPlan finishes the room.
     private var aiItems: [RoomItem] = []
     private var isAnalyzing = false
+    /// AI scans that found something in the room being scanned.
+    private var aiScansThisRoom = 0
 
     private let cancelButton = UIButton(configuration: .gray())
     private let aiButton = UIButton(configuration: .gray())
@@ -128,6 +130,7 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
 
     private func startRoom() {
         aiItems = []
+        aiScansThisRoom = 0
         captureView.captureSession.run(configuration: RoomCaptureSession.Configuration())
         phase = .scanning
         updateButtons()
@@ -183,7 +186,7 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
     @objc private func nextTapped() {
         switch phase {
         case .scanning:
-            stopRoom(thenFinish: false)
+            remindAboutAI(leaving: "Skip to Next Room") { self.stopRoom(thenFinish: false) }
         case .betweenRooms:
             startRoom()
         case .processing:
@@ -194,12 +197,29 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
     @objc private func doneTapped() {
         switch phase {
         case .scanning:
-            stopRoom(thenFinish: true)
+            remindAboutAI(leaving: "Finish Without Scanning") { self.stopRoom(thenFinish: true) }
         case .betweenRooms:
             onFinish?(rooms)
         case .processing:
             break
         }
+    }
+
+    /// Asks before leaving a room that AI Find Items has not looked at yet.
+    private func remindAboutAI(leaving title: String, then leave: @escaping () -> Void) {
+        guard aiScansThisRoom == 0, APIKeyStore.hasKey else {
+            leave()
+            return
+        }
+        let alert = UIAlertController(
+            title: "Find items in \(currentRoomName) with AI?",
+            message: "AI Find Items hasn't looked at this room yet. Point at each wall, and up at the ceiling for lights and vents, then tap AI Find Items for each view.",
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Scan Now", style: .default) { _ in self.aiTapped() })
+        alert.addAction(UIAlertAction(title: title, style: .default) { _ in leave() })
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        present(alert, animated: true)
     }
 
     private func stopRoom(thenFinish: Bool) {
@@ -245,7 +265,12 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
                     ))
                     added += 1
                 }
-                show(CornerMeasureController.summary(found: found.count, added: added))
+                aiScansThisRoom += 1
+                var message = CornerMeasureController.summary(found: found.count, added: added)
+                if aiScansThisRoom == 1 {
+                    message += " Now scan each wall, and tilt up for ceiling lights, vents and detectors."
+                }
+                show(message)
             } catch {
                 show(error.localizedDescription)
             }

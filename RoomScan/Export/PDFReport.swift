@@ -9,7 +9,7 @@ enum PDFReport {
     private static var contentWidth: CGFloat { page.width - margin * 2 }
 
     @MainActor
-    static func data(for property: Property, useFeet: Bool) -> Data {
+    static func data(for property: Property, useFeet: Bool, includePhotos: Bool = true) -> Data {
         // Floor plan pictures are drawn up front: SwiftUI only renders on the main thread.
         let housePlan = planImage(rooms: property.rooms, showDetails: false, useFeet: useFeet, height: 360)
         let roomPlans = property.rooms.map { planImage(rooms: [$0], showDetails: true, useFeet: useFeet, height: 280) }
@@ -50,8 +50,10 @@ enum PDFReport {
                     writer.image(plan)
                 }
                 writer.space(8)
-                itemTable(title: "Existing items", room: room, items: room.items.filter { !$0.isRequested }, writer: &writer)
-                itemTable(title: "Customer requested", room: room, items: room.items.filter(\.isRequested), writer: &writer)
+                itemTable(title: "Existing items", room: room, items: room.items.filter { !$0.isRequested },
+                          photos: includePhotos, writer: &writer)
+                itemTable(title: "Customer requested", room: room, items: room.items.filter(\.isRequested),
+                          photos: includePhotos, writer: &writer)
                 if !room.notes.isEmpty {
                     writer.space(6)
                     writer.text("Notes: \(room.notes)", font: .systemFont(ofSize: 11))
@@ -60,7 +62,7 @@ enum PDFReport {
         }
     }
 
-    private static func itemTable(title: String, room: Room, items: [RoomItem], writer: inout Writer) {
+    private static func itemTable(title: String, room: Room, items: [RoomItem], photos: Bool, writer: inout Writer) {
         guard !items.isEmpty else { return }
         writer.space(6)
         writer.text(title, font: .boldSystemFont(ofSize: 13))
@@ -74,7 +76,7 @@ enum PDFReport {
             if let parent = room.item(item.parentID) { details.insert("On \(parent.name)", at: 0) }
             if !item.notes.isEmpty { details.append(item.notes) }
             line += "  —  " + details.joined(separator: " · ")
-            writer.row(line, font: .systemFont(ofSize: 11), photo: thumbnail(of: item),
+            writer.row(line, font: .systemFont(ofSize: 11), photo: photos ? thumbnail(of: item) : nil,
                        indent: CGFloat(entry.depth) * 16)
         }
     }
@@ -176,21 +178,35 @@ enum PDFReport {
 
 /// Writes the export files to a temporary folder for sharing.
 enum ExportFiles {
+    struct Options {
+        var pdf = true
+        var spreadsheet = true
+        var quoteData = true
+        var photos = true
+    }
+
     @MainActor
-    static func make(for property: Property, useFeet: Bool) throws -> [URL] {
+    static func make(for property: Property, useFeet: Bool, options: Options = Options()) throws -> [URL] {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Export-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let base = property.name.replacingOccurrences(of: "/", with: "-")
 
-        let pdf = folder.appendingPathComponent("\(base) Walkthrough.pdf")
-        try PDFReport.data(for: property, useFeet: useFeet).write(to: pdf)
-
-        let csv = folder.appendingPathComponent("\(base) Items.csv")
-        try WalkthroughExport.csv(for: property, useFeet: useFeet).write(to: csv, atomically: true, encoding: .utf8)
-
-        let json = folder.appendingPathComponent("\(base) Walkthrough.json")
-        try WalkthroughExport(property: property, useFeet: useFeet).jsonData().write(to: json)
-
-        return [pdf, csv, json]
+        var files: [URL] = []
+        if options.pdf {
+            let pdf = folder.appendingPathComponent("\(base) Walkthrough.pdf")
+            try PDFReport.data(for: property, useFeet: useFeet, includePhotos: options.photos).write(to: pdf)
+            files.append(pdf)
+        }
+        if options.spreadsheet {
+            let csv = folder.appendingPathComponent("\(base) Items.csv")
+            try WalkthroughExport.csv(for: property, useFeet: useFeet).write(to: csv, atomically: true, encoding: .utf8)
+            files.append(csv)
+        }
+        if options.quoteData {
+            let json = folder.appendingPathComponent("\(base) Walkthrough.json")
+            try WalkthroughExport(property: property, useFeet: useFeet).jsonData().write(to: json)
+            files.append(json)
+        }
+        return files
     }
 }

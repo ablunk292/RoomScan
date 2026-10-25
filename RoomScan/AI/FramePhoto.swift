@@ -55,7 +55,12 @@ struct FramePhoto {
 
     /// Where a point in the upright photo (fractions from the top-left) lands in the room,
     /// found by casting a ray from where the camera was when the photo was taken.
-    func worldPosition(x: Double, y: Double, in session: ARSession) -> SIMD3<Float>? {
+    ///
+    /// Ceilings rarely have a detected surface on phones without LiDAR, so when the ray hits
+    /// nothing and the floor height is known, the item is placed where the ray meets the floor
+    /// (looking down) or a ceiling `ceilingHeight` above it (looking up).
+    func worldPosition(x: Double, y: Double, in session: ARSession,
+                       floorY: Float? = nil, ceilingHeight: Float = 2.44) -> SIMD3<Float>? {
         // The camera sensor is landscape; the photo was turned a quarter turn clockwise.
         let pixelX = Float(y * imageResolution.width)
         let pixelY = Float((1 - x) * imageResolution.height)
@@ -75,6 +80,10 @@ struct FramePhoto {
                 return SIMD3<Float>(t.x, t.y, t.z)
             }
         }
-        return nil
+        guard let floorY, abs(worldDirection.y) > 0.05 else { return nil }
+        let planeY = worldDirection.y < 0 ? floorY : floorY + ceilingHeight
+        let distance = (planeY - origin.y) / worldDirection.y
+        guard distance > 0, distance < 15 else { return nil }
+        return origin + worldDirection * distance
     }
 }

@@ -15,6 +15,9 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     @Published private(set) var aimPoint: SIMD3<Float>?
     @Published private(set) var status = "Move your phone slowly to find the floor."
     @Published private(set) var isAnalyzing = false
+    /// AI scans that found something in the room being mapped, so the screen can remind the
+    /// user to scan a room they are about to leave.
+    @Published private(set) var aiScansThisRoom = 0
     /// Result of the last AI scan, shown briefly on screen.
     @Published var aiMessage: String?
 
@@ -133,7 +136,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
                                                                 focus: DetectionPresets.shared.activeFocus)
             var added = 0
             for found in detected {
-                let position = photo.worldPosition(x: found.x, y: found.y, in: sceneView.session)
+                let position = photo.worldPosition(x: found.x, y: found.y, in: sceneView.session, floorY: floorY)
                 if isDuplicate(name: found.name, at: position) { continue }
                 let item = RoomItem(
                     name: found.name,
@@ -146,13 +149,17 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
                 addItem(item, at: position)
                 added += 1
             }
+            aiScansThisRoom += 1
             aiMessage = Self.summary(found: detected.count, added: added)
+            if aiScansThisRoom == 1 {
+                aiMessage = (aiMessage ?? "") + " Now scan each wall, and tilt up for ceiling lights, vents and detectors."
+            }
         } catch {
             aiMessage = error.localizedDescription
         }
         let shown = aiMessage
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(5))
+            try? await Task.sleep(for: .seconds(7))
             if self?.aiMessage == shown { self?.aiMessage = nil }
         }
     }
@@ -208,6 +215,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         cornerNodes = []
         corners = []
         items = []
+        aiScansThisRoom = 0
         return true
     }
 

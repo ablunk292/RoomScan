@@ -16,6 +16,15 @@ struct CornerMeasureScreen: View {
     @State private var askingRoomName = false
     @State private var nextRoomName = ""
     @State private var confirmingCancel = false
+    /// Set when the user is leaving a room the AI has not looked at yet.
+    @State private var aiReminder: LeaveAction?
+
+    private enum LeaveAction: Identifiable {
+        case nextRoom
+        case done
+
+        var id: Self { self }
+    }
 
     init(firstRoomName: String, onCancel: @escaping () -> Void, onFinish: @escaping ([Room]) -> Void) {
         self.firstRoomName = firstRoomName
@@ -68,6 +77,21 @@ struct CornerMeasureScreen: View {
         } message: {
             Text("\(roomName) is saved. Walk into the next room and map its corners.")
         }
+        .confirmationDialog("Find items in \(roomName) with AI?",
+                            isPresented: Binding(get: { aiReminder != nil }, set: { if !$0 { aiReminder = nil } }),
+                            titleVisibility: .visible,
+                            presenting: aiReminder) { action in
+            Button("Scan Now") {
+                Task { await controller.scanItemsWithAI(roomName: roomName) }
+            }
+            Button(action == .done ? "Finish Without Scanning" : "Skip to Next Room") {
+                // Let the dialog close before the next-room prompt opens.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { leave(action) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("AI Find Items hasn't looked at this room yet. Point at each wall, and up at the ceiling for lights and vents, then tap AI Find Items for each view.")
+        }
         .confirmationDialog("Discard this scan?", isPresented: $confirmingCancel, titleVisibility: .visible) {
             Button("Discard", role: .destructive) {
                 (controller.finishedRooms.flatMap(\.items) + controller.items).forEach { ItemPhotos.delete($0.photoFileName) }
@@ -102,7 +126,7 @@ struct CornerMeasureScreen: View {
                 .padding(.vertical, 4)
                 .background(.ultraThinMaterial, in: Capsule())
                 Spacer()
-                Button("Done") { onFinish(controller.allRooms(currentName: roomName)) }
+                Button("Done") { tryLeave(.done) }
                     .buttonStyle(.borderedProminent)
                     .disabled(controller.allRooms(currentName: roomName).isEmpty)
             }
@@ -152,7 +176,7 @@ struct CornerMeasureScreen: View {
                 .disabled(controller.isAnalyzing)
 
                 Button {
-                    askingRoomName = true
+                    tryLeave(.nextRoom)
                 } label: {
                     Label("Next Room", systemImage: "arrow.right.square")
                         .frame(maxWidth: .infinity, minHeight: 36)
@@ -190,6 +214,23 @@ struct CornerMeasureScreen: View {
                 .buttonStyle(.bordered)
                 .disabled(controller.aimPoint == nil)
             }
+        }
+    }
+
+    /// Reminds the user to run AI Find Items before leaving a room it has not seen.
+    private func tryLeave(_ action: LeaveAction) {
+        let roomInProgress = controller.corners.count >= 3
+        if roomInProgress, controller.aiScansThisRoom == 0, APIKeyStore.hasKey {
+            aiReminder = action
+        } else {
+            leave(action)
+        }
+    }
+
+    private func leave(_ action: LeaveAction) {
+        switch action {
+        case .nextRoom: askingRoomName = true
+        case .done: onFinish(controller.allRooms(currentName: roomName))
         }
     }
 
