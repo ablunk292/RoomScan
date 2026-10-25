@@ -2,12 +2,22 @@
 
 iPhone app for scanning rooms, documenting what is inside, and turning walkthroughs into quotes.
 
-## What works in this first version
+## What it does
 
-- **Corner measure (any recent iPhone, including iPhone 14):** point the crosshair at each floor corner and tap **Add Corner**. The app measures each wall as you go and works out floor area and perimeter. Tap the pin button to drop an item (outlet, thermostat, TV…) where the crosshair is.
-- **LiDAR scan (iPhone 12 Pro or newer Pro, iPad Pro):** uses Apple's RoomPlan to scan the whole room. Walls, doors, windows, ceiling height and furniture or appliances are found automatically, and a 3D model is saved.
-- **Room page:** floor plan with wall lengths and numbered item pins, measurements, existing items with their condition, customer-requested items, notes, and a text summary you can share.
-- Feet or meters, switchable on the home screen. Rooms are saved on the phone.
+- **Whole properties:** create a house, apartment or building, then map its rooms one after another in a single walk. Tap **Next Room** as you go; rooms mapped in one session line up into a whole-house floor plan.
+- **Corner mapping (any recent iPhone, including iPhone 14):** point the crosshair at each floor corner and tap **Add Corner**. The app measures each wall as you go and works out floor area and perimeter. Tap the pin button to place an item yourself.
+- **AI Find Items:** point the camera at part of the room and tap **AI Find Items**. Claude lists what it sees (outlets, switches, vents, thermostats, fixtures, appliances, furniture, detectors, damage) with its condition, and each item is pinned where it is in the room. Repeat from a few angles; repeats of the same item are skipped. Needs a Claude API key in Settings.
+- **LiDAR scan (iPhone 12 Pro or newer Pro, iPad Pro):** uses Apple's RoomPlan to scan each room. Walls, doors, windows, ceiling height and furniture or appliances are found automatically, and a 3D model is saved. AI Find Items works here too.
+- **Property page:** whole-house floor plan, total area, room list, and a shareable summary of every room.
+- **Room page:** floor plan with wall lengths and numbered item pins, measurements, existing items with their condition, customer-requested items, notes, and rename.
+- Feet or meters in Settings. Everything is saved on the phone.
+
+## AI item detection setup (testing)
+
+1. Sign in at [console.anthropic.com](https://console.anthropic.com), add a few dollars of credit under **Billing**, and create a key under **API Keys**.
+2. In the app, tap the gear on the home screen and paste the key under **AI item detection**.
+
+The key is stored in the iPhone's Keychain. This is for testing only: before the app is sold, AI requests will go through a server so customers never handle a key.
 
 ## Run it on your iPhone
 
@@ -28,13 +38,15 @@ You need a Mac with Xcode (free from the Mac App Store), your iPhone, and a USB 
 
 - Use good light, and start by slowly sweeping the phone across the floor until the crosshair appears.
 - Aim at the exact spot where two walls meet the floor. Furniture in a corner: aim where the corner would be.
-- Go around the room in order, then tap **Finish**. You need at least 3 corners.
+- Go around the room in order. You need at least 3 corners before **Next Room** or **Done**.
+- Moving between rooms, keep the camera running and walk slowly through the doorway so tracking stays locked.
 - Without LiDAR, expect measurements within a few inches on a typical room. Measure ceiling height with a tape and type it in on the room page.
 
 ## Project layout
 
-- `RoomScan/Capture/` – corner measuring (ARKit) and LiDAR scanning (RoomPlan)
-- `RoomScan/Models/` – room data, geometry, units, and saving to the phone
-- `RoomScan/Views/` – home screen, room page, floor plan drawing, item editor
+- `RoomScan/Capture/` – corner mapping (ARKit) and LiDAR scanning (RoomPlan)
+- `RoomScan/AI/` – AI item detection with Claude, camera photos, and API key storage
+- `RoomScan/Models/` – properties, rooms, geometry, units, and saving to the phone
+- `RoomScan/Views/` – home, property, room, settings, floor plan drawing, item editor
 
 The app needs iOS 17 or newer.

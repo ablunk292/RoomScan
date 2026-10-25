@@ -2,28 +2,27 @@ import ARKit
 import SceneKit
 import UIKit
 
-/// Runs the AR session for measuring a room by tapping its floor corners.
+/// Runs the AR session for mapping rooms by tapping their floor corners.
 /// Works on any iPhone with ARKit; it does not need LiDAR.
 ///
 /// The crosshair in the middle of the screen is projected onto the floor every frame.
-/// Corners and item pins are dropped where the crosshair meets the floor.
+/// Corners and item pins are dropped where the crosshair meets the floor. Several rooms can
+/// be mapped in one session; they share the same coordinates, so a whole house lines up.
 final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelegate, ARSessionDelegate {
-    struct PlacedItem {
-        var name: String
-        var position: SIMD3<Float>
-    }
-
     @Published private(set) var corners: [SIMD3<Float>] = []
-    @Published private(set) var items: [PlacedItem] = []
+    @Published private(set) var items: [RoomItem] = []
+    @Published private(set) var finishedRooms: [Room] = []
     @Published private(set) var aimPoint: SIMD3<Float>?
     @Published private(set) var status = "Move your phone slowly to find the floor."
+    @Published private(set) var isAnalyzing = false
+    /// Result of the last AI scan, shown briefly on screen.
+    @Published var aiMessage: String?
 
     let sceneView = ARSCNView()
 
     private let reticle = CornerMeasureController.makeReticle()
     private var cornerNodes: [SCNNode] = []
     private var segmentNodes: [SCNNode] = []
-    private var itemNodes: [SCNNode] = []
     private var liveSegment: SCNNode?
     private var closingSegment: SCNNode?
     private var updatePending = false
@@ -32,6 +31,10 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     var liveDistance: Double? {
         guard let last = corners.last, let aim = aimPoint else { return nil }
         return Double(simd_distance(last, aim))
+    }
+
+    var currentArea: Double {
+        Geometry.area(of: corners.map(Self.floorPoint))
     }
 
     override init() {
@@ -69,7 +72,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         sceneView.session.pause()
     }
 
-    // MARK: Actions
+    // MARK: Corners
 
     func addCorner() {
         guard let point = aimPoint else { return }
@@ -101,22 +104,107 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         updateClosingSegment()
     }
 
+    // MARK: Items
+
     func addItem(named name: String) {
         guard let point = aimPoint else { return }
-        let node = Self.makeItemMarker()
-        node.simdPosition = point
-        sceneView.scene.rootNode.addChildNode(node)
-        itemNodes.append(node)
-        items.append(PlacedItem(name: name, position: point))
+        addItem(RoomItem(name: name), at: point)
     }
 
-    /// Builds the finished room. Floor coordinates are x and z of the AR world, seen from above.
-    func makeRoom(named name: String) -> Room {
-        let outline = corners.map { Point2D(x: Double($0.x), y: Double($0.z)) }
-        let roomItems = items.map { item in
-            RoomItem(name: item.name, position: Point2D(x: Double(item.position.x), y: Double(item.position.z)))
+    /// Takes a photo of what the camera sees and asks the AI to find and pin the items in it.
+    @MainActor
+    func scanItemsWithAI(roomName: String) async {
+        guard !isAnalyzing else { return }
+        guard let frame = sceneView.session.currentFrame, let photo = FramePhoto(frame: frame) else {
+            aiMessage = "Camera not ready yet."
+            return
         }
-        return Room(name: name, method: .cornerTap, outline: outline, items: roomItems)
+        isAnalyzing = true
+        defer { isAnalyzing = false }
+        do {
+            let detected = try await ItemDetector.detectItems(inJPEG: photo.jpeg, roomName: roomName)
+            var added = 0
+            for found in detected {
+                let position = photo.worldPosition(x: found.x, y: found.y, in: sceneView.session)
+                if isDuplicate(name: found.name, at: position) { continue }
+                let item = RoomItem(
+                    name: found.name,
+                    category: found.category,
+                    condition: found.condition,
+                    notes: found.notes,
+                    detectedAutomatically: true
+                )
+                addItem(item, at: position)
+                added += 1
+            }
+            aiMessage = added == 0 ? "No new items found. Try another angle." : "Added \(added) item\(added == 1 ? "" : "s")."
+        } catch {
+            aiMessage = error.localizedDescription
+        }
+        let shown = aiMessage
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            if self?.aiMessage == shown { self?.aiMessage = nil }
+        }
+    }
+
+    private func addItem(_ item: RoomItem, at position: SIMD3<Float>?) {
+        var item = item
+        if let position {
+            item.position = Self.floorPoint(position)
+            let node = Self.makeItemMarker(detected: item.detectedAutomatically)
+            node.simdPosition = position
+            sceneView.scene.rootNode.addChildNode(node)
+        }
+        items.append(item)
+    }
+
+    /// The same thing seen again from another angle: same name, within half a meter.
+    private func isDuplicate(name: String, at position: SIMD3<Float>?) -> Bool {
+        guard let position else { return false }
+        let point = Self.floorPoint(position)
+        return items.contains { item in
+            guard let other = item.position else { return false }
+            return item.name.caseInsensitiveCompare(name) == .orderedSame && Geometry.distance(point, other) < 0.5
+        }
+    }
+
+    // MARK: Rooms
+
+    /// Saves the room being mapped and clears the way for the next one. The finished room's
+    /// outline stays visible, dimmed, so the next room can start from a shared wall.
+    @discardableResult
+    func finishCurrentRoom(named name: String) -> Bool {
+        guard corners.count >= 3 else { return false }
+        finishedRooms.append(Room(name: name, method: .cornerTap, outline: corners.map(Self.floorPoint), items: items))
+
+        if let first = corners.first, let last = corners.last {
+            segmentNodes.append(Self.makeSegment(from: last, to: first))
+            sceneView.scene.rootNode.addChildNode(segmentNodes[segmentNodes.count - 1])
+        }
+        for node in segmentNodes + cornerNodes {
+            node.geometry?.firstMaterial?.diffuse.contents = UIColor.systemGray
+        }
+        closingSegment?.removeFromParentNode()
+        closingSegment = nil
+        segmentNodes = []
+        cornerNodes = []
+        corners = []
+        items = []
+        return true
+    }
+
+    /// Every room mapped in this session, including the one in progress if it has enough corners.
+    func allRooms(currentName: String) -> [Room] {
+        var rooms = finishedRooms
+        if corners.count >= 3 {
+            rooms.append(Room(name: currentName, method: .cornerTap, outline: corners.map(Self.floorPoint), items: items))
+        }
+        return rooms
+    }
+
+    private static func floorPoint(_ point: SIMD3<Float>) -> Point2D {
+        Point2D(x: Double(point.x), y: Double(point.z))
     }
 
     // MARK: Frame updates
@@ -134,7 +222,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         let message: String
         switch camera.trackingState {
         case .normal:
-            message = corners.isEmpty ? "Aim the crosshair at a floor corner and tap Add Corner." : "Aim at the next corner."
+            message = "Aim the crosshair at a floor corner and tap Add Corner."
         case .limited(.excessiveMotion):
             message = "Slow down."
         case .limited(.insufficientFeatures):
@@ -182,7 +270,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         return sceneView.session.raycast(query).first
     }
 
-    /// Dashed-looking line from the last corner back to the first, so the user sees the room close.
+    /// Faint line from the last corner back to the first, so the user sees the room close.
     private func updateClosingSegment() {
         closingSegment?.removeFromParentNode()
         closingSegment = nil
@@ -213,21 +301,12 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         return SCNNode(geometry: sphere)
     }
 
-    private static func makeItemMarker() -> SCNNode {
-        let pin = SCNCylinder(radius: 0.01, height: 0.25)
-        pin.firstMaterial?.diffuse.contents = UIColor.systemTeal
-        pin.firstMaterial?.lightingModel = .constant
-        let pinNode = SCNNode(geometry: pin)
-        pinNode.simdPosition = SIMD3<Float>(0, 0.125, 0)
-        let head = SCNSphere(radius: 0.03)
-        head.firstMaterial?.diffuse.contents = UIColor.systemTeal
-        head.firstMaterial?.lightingModel = .constant
-        let headNode = SCNNode(geometry: head)
-        headNode.simdPosition = SIMD3<Float>(0, 0.25, 0)
-        let node = SCNNode()
-        node.addChildNode(pinNode)
-        node.addChildNode(headNode)
-        return node
+    /// A small ball where the item is (on a wall, the floor or furniture).
+    private static func makeItemMarker(detected: Bool) -> SCNNode {
+        let ball = SCNSphere(radius: 0.03)
+        ball.firstMaterial?.diffuse.contents = detected ? UIColor.systemPurple : UIColor.systemTeal
+        ball.firstMaterial?.lightingModel = .constant
+        return SCNNode(geometry: ball)
     }
 
     private static func makeSegment(from a: SIMD3<Float>, to b: SIMD3<Float>, color: UIColor = .systemYellow) -> SCNNode {

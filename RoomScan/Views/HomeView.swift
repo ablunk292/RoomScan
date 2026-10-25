@@ -8,144 +8,204 @@ enum CaptureMode: String, Identifiable {
     var id: String { rawValue }
 }
 
+/// What a capture session is for: a brand-new property, or more rooms for an existing one.
+struct CaptureRequest: Identifiable {
+    enum Target {
+        case newProperty(name: String, address: String)
+        case existing(Property.ID)
+    }
+
+    let id = UUID()
+    let mode: CaptureMode
+    let target: Target
+    let firstRoomName: String
+}
+
 struct HomeView: View {
-    @EnvironmentObject private var store: RoomStore
+    @EnvironmentObject private var store: PropertyStore
     @AppStorage(Units.useFeetKey) private var useFeet = true
-    @State private var path: [Room.ID] = []
-    @State private var showingNewRoom = false
-    @State private var pendingName = ""
-    @State private var captureMode: CaptureMode?
-    /// Chosen in the New Room sheet; opened once the sheet has finished closing,
+    @State private var path: [Property.ID] = []
+    @State private var showingNewProperty = false
+    @State private var showingSettings = false
+    @State private var capture: CaptureRequest?
+    /// Chosen in the New Property sheet; opened once the sheet has finished closing,
     /// since SwiftUI cannot present a full-screen view while a sheet is dismissing.
-    @State private var nextMode: CaptureMode?
+    @State private var nextCapture: CaptureRequest?
 
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                if store.rooms.isEmpty {
+                if store.properties.isEmpty {
                     ContentUnavailableView(
-                        "No rooms yet",
-                        systemImage: "viewfinder",
-                        description: Text("Tap New Room to measure your first room.")
+                        "No properties yet",
+                        systemImage: "house",
+                        description: Text("Tap + to map a house, apartment or building.")
                     )
                     .listRowBackground(Color.clear)
                 }
-                ForEach(store.rooms) { room in
-                    NavigationLink(value: room.id) {
-                        RoomRow(room: room, useFeet: useFeet)
+                ForEach(store.properties) { property in
+                    NavigationLink(value: property.id) {
+                        PropertyRow(property: property, useFeet: useFeet)
                     }
                 }
                 .onDelete { store.delete(at: $0) }
             }
             .navigationTitle("RoomScan")
-            .navigationDestination(for: Room.ID.self) { id in
-                RoomDetailView(roomID: id)
+            .navigationDestination(for: Property.ID.self) { id in
+                PropertyView(propertyID: id) { mode in
+                    capture = CaptureRequest(mode: mode, target: .existing(id), firstRoomName: "Room \((store.property(id: id)?.rooms.count ?? 0) + 1)")
+                }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Picker("Units", selection: $useFeet) {
-                        Text("ft").tag(true)
-                        Text("m").tag(false)
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
                     }
-                    .pickerStyle(.segmented)
-                    .frame(width: 90)
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        pendingName = "Room \(store.rooms.count + 1)"
-                        showingNewRoom = true
+                        showingNewProperty = true
                     } label: {
-                        Label("New Room", systemImage: "plus")
+                        Label("New Property", systemImage: "plus")
                     }
                 }
             }
-            .sheet(isPresented: $showingNewRoom, onDismiss: {
-                captureMode = nextMode
-                nextMode = nil
-            }) {
-                NewRoomView(name: $pendingName) { mode in
-                    nextMode = mode
-                    showingNewRoom = false
-                }
-                .presentationDetents([.medium])
+            .sheet(isPresented: $showingSettings) {
+                SettingsView()
             }
-            .fullScreenCover(item: $captureMode) { mode in
-                captureScreen(for: mode)
+            .sheet(isPresented: $showingNewProperty, onDismiss: {
+                capture = nextCapture
+                nextCapture = nil
+            }) {
+                NewPropertyView(defaultName: "Property \(store.properties.count + 1)") { request in
+                    nextCapture = request
+                    showingNewProperty = false
+                }
+            }
+            .fullScreenCover(item: $capture) { request in
+                captureScreen(for: request)
             }
         }
     }
 
     @ViewBuilder
-    private func captureScreen(for mode: CaptureMode) -> some View {
-        let name = pendingName.trimmingCharacters(in: .whitespaces).isEmpty ? "Room" : pendingName
-        switch mode {
+    private func captureScreen(for request: CaptureRequest) -> some View {
+        switch request.mode {
         case .cornerTap:
-            CornerMeasureScreen(roomName: name, onCancel: { captureMode = nil }, onFinish: finish)
+            CornerMeasureScreen(firstRoomName: request.firstRoomName, onCancel: { capture = nil }) { rooms in
+                finish(request, rooms: rooms)
+            }
         case .lidar:
-            LiDARScanScreen(roomName: name, modelsDirectory: store.modelsDirectory, onCancel: { captureMode = nil }, onFinish: finish)
+            LiDARScanScreen(firstRoomName: request.firstRoomName, modelsDirectory: store.modelsDirectory, onCancel: { capture = nil }) { rooms in
+                finish(request, rooms: rooms)
+            }
+            .ignoresSafeArea()
         }
     }
 
-    private func finish(_ room: Room) {
-        store.add(room)
-        captureMode = nil
-        path = [room.id]
+    private func finish(_ request: CaptureRequest, rooms: [Room]) {
+        capture = nil
+        switch request.target {
+        case .newProperty(let name, let address):
+            var property = Property(name: name, address: address)
+            property.rooms = rooms
+            store.add(property)
+            path = [property.id]
+        case .existing(let id):
+            guard var property = store.property(id: id) else { return }
+            property.append(roomsFromNewSession: rooms)
+            store.update(property)
+        }
     }
 }
 
-private struct RoomRow: View {
-    let room: Room
+private struct PropertyRow: View {
+    let property: Property
     let useFeet: Bool
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: room.method == .lidar ? "cube.transparent" : "ruler")
+            Image(systemName: "house")
                 .font(.title3)
                 .foregroundStyle(.tint)
                 .frame(width: 32)
             VStack(alignment: .leading, spacing: 2) {
-                Text(room.name).font(.headline)
-                Text("\(Units.area(room.area, feet: useFeet)) · \(room.items.count) items")
-                    .font(.subheadline)
+                Text(property.name).font(.headline)
+                if !property.address.isEmpty {
+                    Text(property.address).font(.subheadline).foregroundStyle(.secondary)
+                }
+                Text("\(property.rooms.count) rooms · \(Units.area(property.totalArea, feet: useFeet)) · \(property.itemCount) items")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
     }
 }
 
-struct NewRoomView: View {
-    @Binding var name: String
-    let onStart: (CaptureMode) -> Void
+struct NewPropertyView: View {
+    let defaultName: String
+    let onStart: (CaptureRequest) -> Void
 
-    private let lidarAvailable = RoomCaptureSession.isSupported
+    @State private var name = ""
+    @State private var address = ""
+    @State private var firstRoom = "Living Room"
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Room name") {
-                    TextField("Kitchen, Office 101…", text: $name)
+                Section("Property") {
+                    TextField(defaultName, text: $name)
+                    TextField("Address (optional)", text: $address)
                 }
                 Section {
-                    Button {
-                        onStart(.lidar)
-                    } label: {
-                        Label("Scan with LiDAR", systemImage: "cube.transparent")
-                    }
-                    .disabled(!lidarAvailable)
-
-                    Button {
-                        onStart(.cornerTap)
-                    } label: {
-                        Label("Measure by tapping corners", systemImage: "ruler")
-                    }
+                    TextField("First room", text: $firstRoom)
                 } footer: {
-                    Text(lidarAvailable
-                         ? "LiDAR scanning measures walls, doors, windows and furniture automatically."
-                         : "This phone has no LiDAR sensor, so it measures by tapping each corner of the floor. LiDAR scanning needs an iPhone Pro (12 Pro or newer) or iPad Pro.")
+                    Text("Map each room in turn and tap Next Room as you walk through. Rooms mapped in one go line up into a whole-house floor plan.")
+                }
+                CaptureModeSection { mode in
+                    let trimmedName = name.trimmingCharacters(in: .whitespaces)
+                    let trimmedRoom = firstRoom.trimmingCharacters(in: .whitespaces)
+                    onStart(CaptureRequest(
+                        mode: mode,
+                        target: .newProperty(name: trimmedName.isEmpty ? defaultName : trimmedName,
+                                             address: address.trimmingCharacters(in: .whitespaces)),
+                        firstRoomName: trimmedRoom.isEmpty ? "Room 1" : trimmedRoom
+                    ))
                 }
             }
-            .navigationTitle("New Room")
+            .navigationTitle("New Property")
             .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+}
+
+/// The two ways to map rooms, with LiDAR offered only on phones that have it.
+struct CaptureModeSection: View {
+    let onChoose: (CaptureMode) -> Void
+    private let lidarAvailable = RoomCaptureSession.isSupported
+
+    var body: some View {
+        Section {
+            Button {
+                onChoose(.lidar)
+            } label: {
+                Label("Scan with LiDAR", systemImage: "cube.transparent")
+            }
+            .disabled(!lidarAvailable)
+
+            Button {
+                onChoose(.cornerTap)
+            } label: {
+                Label("Map by tapping corners", systemImage: "ruler")
+            }
+        } header: {
+            Text("Start mapping")
+        } footer: {
+            Text(lidarAvailable
+                 ? "LiDAR scanning measures walls, doors, windows and furniture automatically."
+                 : "This phone has no LiDAR sensor, so rooms are mapped by tapping each floor corner. Use AI Find Items to recognize what is in each room. LiDAR scanning needs an iPhone Pro (12 Pro or newer) or iPad Pro.")
         }
     }
 }

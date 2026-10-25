@@ -69,4 +69,24 @@ enum Geometry {
         corners.append(midpoint(current.1, firstStart))
         return corners
     }
+
+    struct Bounds {
+        var minX: Double
+        var minY: Double
+        var maxX: Double
+        var maxY: Double
+    }
+
+    static func bounds(of points: [Point2D]) -> Bounds? {
+        guard let minX = points.map(\.x).min(), let maxX = points.map(\.x).max(),
+              let minY = points.map(\.y).min(), let maxY = points.map(\.y).max() else { return nil }
+        return Bounds(minX: minX, minY: minY, maxX: maxX, maxY: maxY)
+    }
+
+    /// Center of a polygon's corners; good enough for placing a label inside a room.
+    static func center(of points: [Point2D]) -> Point2D? {
+        guard !points.isEmpty else { return nil }
+        let count = Double(points.count)
+        return Point2D(x: points.map(\.x).reduce(0, +) / count, y: points.map(\.y).reduce(0, +) / count)
+    }
 }

@@ -1,15 +1,28 @@
 import ARKit
 import SwiftUI
 
+/// Maps one or more rooms by tapping floor corners. Walk from room to room and tap Next Room;
+/// all rooms from one session line up into a single floor plan.
 struct CornerMeasureScreen: View {
-    let roomName: String
+    let firstRoomName: String
     let onCancel: () -> Void
-    let onFinish: (Room) -> Void
+    let onFinish: ([Room]) -> Void
 
     @StateObject private var controller = CornerMeasureController()
     @AppStorage(Units.useFeetKey) private var useFeet = true
+    @State private var roomName: String
     @State private var askingItemName = false
     @State private var itemName = ""
+    @State private var askingRoomName = false
+    @State private var nextRoomName = ""
+    @State private var confirmingCancel = false
+
+    init(firstRoomName: String, onCancel: @escaping () -> Void, onFinish: @escaping ([Room]) -> Void) {
+        self.firstRoomName = firstRoomName
+        self.onCancel = onCancel
+        self.onFinish = onFinish
+        _roomName = State(initialValue: firstRoomName)
+    }
 
     var body: some View {
         ZStack {
@@ -40,28 +53,63 @@ struct CornerMeasureScreen: View {
             }
             Button("Cancel", role: .cancel) { itemName = "" }
         } message: {
-            Text("The item is pinned where the crosshair meets the floor. You can add details after saving.")
+            Text("The item is pinned where the crosshair points. You can add details after saving.")
         }
+        .alert("Next room", isPresented: $askingRoomName) {
+            TextField("Kitchen, Bedroom 2…", text: $nextRoomName)
+            Button("Start") {
+                if controller.finishCurrentRoom(named: roomName) {
+                    let name = nextRoomName.trimmingCharacters(in: .whitespaces)
+                    roomName = name.isEmpty ? "Room \(controller.finishedRooms.count + 1)" : name
+                }
+                nextRoomName = ""
+            }
+            Button("Cancel", role: .cancel) { nextRoomName = "" }
+        } message: {
+            Text("\(roomName) is saved. Walk into the next room and map its corners.")
+        }
+        .confirmationDialog("Discard this scan?", isPresented: $confirmingCancel, titleVisibility: .visible) {
+            Button("Discard", role: .destructive, action: onCancel)
+        } message: {
+            Text("The rooms mapped in this session will not be saved.")
+        }
+    }
+
+    private var hasWork: Bool {
+        !controller.corners.isEmpty || !controller.finishedRooms.isEmpty || !controller.items.isEmpty
     }
 
     private var topBar: some View {
         VStack(spacing: 8) {
             HStack {
-                Button("Cancel", action: onCancel)
-                    .buttonStyle(.bordered)
+                Button("Cancel") {
+                    if hasWork { confirmingCancel = true } else { onCancel() }
+                }
+                .buttonStyle(.bordered)
                 Spacer()
-                Text(roomName).font(.headline)
+                VStack(spacing: 0) {
+                    Text(roomName).font(.headline)
+                    if !controller.finishedRooms.isEmpty {
+                        Text("\(controller.finishedRooms.count) room\(controller.finishedRooms.count == 1 ? "" : "s") done")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(.ultraThinMaterial, in: Capsule())
                 Spacer()
-                Button("Finish") { onFinish(controller.makeRoom(named: roomName)) }
+                Button("Done") { onFinish(controller.allRooms(currentName: roomName)) }
                     .buttonStyle(.borderedProminent)
-                    .disabled(controller.corners.count < 3)
+                    .disabled(controller.allRooms(currentName: roomName).isEmpty)
             }
-            Text(controller.status)
+            Text(controller.aiMessage ?? controller.status)
                 .font(.subheadline)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(.ultraThinMaterial, in: Capsule())
+                .onTapGesture { controller.aiMessage = nil }
         }
     }
 
@@ -73,13 +121,38 @@ struct CornerMeasureScreen: View {
                     stat("This wall", Units.length(distance, feet: useFeet))
                 }
                 if controller.corners.count >= 3 {
-                    let area = Geometry.area(of: controller.corners.map { Point2D(x: Double($0.x), y: Double($0.z)) })
-                    stat("Area", Units.area(area, feet: useFeet))
+                    stat("Area", Units.area(controller.currentArea, feet: useFeet))
                 }
                 stat("Items", "\(controller.items.count)")
             }
             .padding(10)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+
+            HStack(spacing: 12) {
+                Button {
+                    Task { await controller.scanItemsWithAI(roomName: roomName) }
+                } label: {
+                    Group {
+                        if controller.isAnalyzing {
+                            ProgressView()
+                        } else {
+                            Label("AI Find Items", systemImage: "sparkles")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 36)
+                }
+                .buttonStyle(.bordered)
+                .disabled(controller.isAnalyzing)
+
+                Button {
+                    askingRoomName = true
+                } label: {
+                    Label("Next Room", systemImage: "arrow.right.square")
+                        .frame(maxWidth: .infinity, minHeight: 36)
+                }
+                .buttonStyle(.bordered)
+                .disabled(controller.corners.count < 3)
+            }
 
             HStack(spacing: 12) {
                 Button {

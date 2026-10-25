@@ -2,12 +2,15 @@ import QuickLook
 import SwiftUI
 
 struct RoomDetailView: View {
+    let propertyID: Property.ID
     let roomID: Room.ID
 
-    @EnvironmentObject private var store: RoomStore
+    @EnvironmentObject private var store: PropertyStore
     @AppStorage(Units.useFeetKey) private var useFeet = true
     @State private var editingItem: EditingItem?
     @State private var modelPreviewURL: URL?
+    @State private var renaming = false
+    @State private var newName = ""
 
     private struct EditingItem: Identifiable {
         let item: RoomItem
@@ -16,7 +19,7 @@ struct RoomDetailView: View {
     }
 
     var body: some View {
-        if let room = store.room(id: roomID) {
+        if let room = store.room(roomID, in: propertyID) {
             content(for: room)
         } else {
             ContentUnavailableView("Room deleted", systemImage: "trash")
@@ -26,7 +29,7 @@ struct RoomDetailView: View {
     private func content(for room: Room) -> some View {
         List {
             Section {
-                FloorPlanView(room: room, useFeet: useFeet)
+                FloorPlanView(rooms: [room], useFeet: useFeet)
                     .frame(height: 300)
                     .listRowInsets(EdgeInsets())
                 if let url = store.modelURL(for: room) {
@@ -41,7 +44,7 @@ struct RoomDetailView: View {
             Section("Measurements") {
                 LabeledContent("Floor area", value: Units.area(room.area, feet: useFeet))
                 LabeledContent("Perimeter", value: Units.length(room.perimeter, feet: useFeet))
-                CeilingHeightRow(room: room, useFeet: useFeet) { store.update($0) }
+                CeilingHeightRow(room: room, useFeet: useFeet) { store.update($0, in: propertyID) }
                 ForEach(Array(room.wallLengths.enumerated()), id: \.offset) { index, length in
                     LabeledContent("Wall \(index + 1)", value: Units.length(length, feet: useFeet))
                 }
@@ -69,11 +72,19 @@ struct RoomDetailView: View {
             }
 
             Section("Notes") {
-                NotesField(room: room) { store.update($0) }
+                NotesField(room: room) { store.update($0, in: propertyID) }
             }
         }
         .navigationTitle(room.name)
         .toolbar {
+            ToolbarItem(placement: .secondaryAction) {
+                Button {
+                    newName = room.name
+                    renaming = true
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 ShareLink(item: RoomReport.text(for: room, useFeet: useFeet)) {
                     Label("Share", systemImage: "square.and.arrow.up")
@@ -89,6 +100,16 @@ struct RoomDetailView: View {
             )
         }
         .quickLookPreview($modelPreviewURL)
+        .alert("Rename room", isPresented: $renaming) {
+            TextField("Room name", text: $newName)
+            Button("Save") {
+                let name = newName.trimmingCharacters(in: .whitespaces)
+                guard !name.isEmpty, var updated = store.room(roomID, in: propertyID) else { return }
+                updated.name = name
+                store.update(updated, in: propertyID)
+            }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 
     @ViewBuilder
@@ -108,19 +129,19 @@ struct RoomDetailView: View {
     }
 
     private func save(_ item: RoomItem, in roomID: Room.ID) {
-        guard var room = store.room(id: roomID) else { return }
+        guard var room = store.room(roomID, in: propertyID) else { return }
         if let index = room.items.firstIndex(where: { $0.id == item.id }) {
             room.items[index] = item
         } else {
             room.items.append(item)
         }
-        store.update(room)
+        store.update(room, in: propertyID)
     }
 
     private func delete(_ itemID: UUID, in roomID: Room.ID) {
-        guard var room = store.room(id: roomID) else { return }
+        guard var room = store.room(roomID, in: propertyID) else { return }
         room.items.removeAll { $0.id == itemID }
-        store.update(room)
+        store.update(room, in: propertyID)
     }
 }
 
@@ -134,7 +155,7 @@ private struct ItemRow: View {
                 .font(.caption.bold())
                 .foregroundStyle(.white)
                 .frame(width: 24, height: 24)
-                .background(Circle().fill(item.isRequested ? Color.green : Color.teal))
+                .background(Circle().fill(ItemColors.color(for: item)))
                 .opacity(item.position == nil ? 0.4 : 1)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.quantity > 1 ? "\(item.name) ×\(item.quantity)" : item.name)

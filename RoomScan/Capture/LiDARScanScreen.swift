@@ -1,28 +1,22 @@
+import ARKit
 import RoomPlan
 import SwiftUI
 import UIKit
 
-/// Full-room LiDAR scan with Apple's RoomPlan. Only runs on phones and iPads with LiDAR.
+/// Whole-room LiDAR scanning with Apple's RoomPlan. Only runs on phones and iPads with LiDAR.
+/// Rooms scanned one after another share one AR session, so they line up into a floor plan.
 struct LiDARScanScreen: UIViewControllerRepresentable {
-    let roomName: String
+    let firstRoomName: String
     let modelsDirectory: URL
     let onCancel: () -> Void
-    let onFinish: (Room) -> Void
+    let onFinish: ([Room]) -> Void
 
     func makeUIViewController(context: Context) -> LiDARScanViewController {
         let controller = LiDARScanViewController()
+        controller.firstRoomName = firstRoomName
+        controller.modelsDirectory = modelsDirectory
         controller.onCancel = onCancel
-        controller.onFinish = { captured in
-            var room = CapturedRoomConverter.room(from: captured, named: roomName)
-            let fileName = "\(room.id.uuidString).usdz"
-            do {
-                try captured.export(to: modelsDirectory.appendingPathComponent(fileName), exportOptions: .parametric)
-                room.modelFileName = fileName
-            } catch {
-                print("LiDAR scan: could not save 3D model: \(error)")
-            }
-            onFinish(room)
-        }
+        controller.onFinish = onFinish
         return controller
     }
 
@@ -30,70 +24,209 @@ struct LiDARScanScreen: UIViewControllerRepresentable {
 }
 
 final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
+    var firstRoomName = "Room 1"
+    var modelsDirectory: URL!
     var onCancel: (() -> Void)?
-    var onFinish: ((CapturedRoom) -> Void)?
+    var onFinish: (([Room]) -> Void)?
 
+    private enum Phase {
+        case scanning
+        case processing(thenFinish: Bool)
+        case betweenRooms
+    }
+
+    private let arSession = ARSession()
     private var captureView: RoomCaptureView!
-    private var finalRoom: CapturedRoom?
-    private var isScanning = false
+    private var phase = Phase.betweenRooms
+    private var rooms: [Room] = []
+    /// Items the AI found in the room being scanned; added to it once RoomPlan finishes the room.
+    private var aiItems: [RoomItem] = []
+    private var isAnalyzing = false
+
     private let cancelButton = UIButton(configuration: .gray())
+    private let aiButton = UIButton(configuration: .gray())
+    private let nextButton = UIButton(configuration: .gray())
     private let doneButton = UIButton(configuration: .filled())
+    private let messageLabel = UILabel()
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
 
-        captureView = RoomCaptureView(frame: view.bounds)
+        captureView = RoomCaptureView(frame: view.bounds, arSession: arSession)
         captureView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         captureView.delegate = self
         view.addSubview(captureView)
 
         cancelButton.setTitle("Cancel", for: .normal)
         cancelButton.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
+        aiButton.setTitle("AI Find Items", for: .normal)
+        aiButton.setImage(UIImage(systemName: "sparkles"), for: .normal)
+        aiButton.addTarget(self, action: #selector(aiTapped), for: .touchUpInside)
+        nextButton.setTitle("Next Room", for: .normal)
+        nextButton.addTarget(self, action: #selector(nextTapped), for: .touchUpInside)
         doneButton.setTitle("Done", for: .normal)
         doneButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
 
-        for button in [cancelButton, doneButton] {
-            button.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(button)
+        messageLabel.textColor = .white
+        messageLabel.font = .preferredFont(forTextStyle: .subheadline)
+        messageLabel.textAlignment = .center
+        messageLabel.numberOfLines = 0
+        messageLabel.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        messageLabel.layer.cornerRadius = 8
+        messageLabel.clipsToBounds = true
+        messageLabel.isHidden = true
+
+        let bottomRow = UIStackView(arrangedSubviews: [aiButton, nextButton, doneButton])
+        bottomRow.axis = .horizontal
+        bottomRow.spacing = 8
+        bottomRow.distribution = .fillEqually
+
+        for subview in [cancelButton, messageLabel, bottomRow] as [UIView] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(subview)
         }
+        let guide = view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
-            cancelButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            cancelButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            doneButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            doneButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            cancelButton.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 16),
+            cancelButton.topAnchor.constraint(equalTo: guide.topAnchor, constant: 8),
+            messageLabel.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 24),
+            messageLabel.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -24),
+            messageLabel.bottomAnchor.constraint(equalTo: bottomRow.topAnchor, constant: -12),
+            bottomRow.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 16),
+            bottomRow.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
+            bottomRow.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -12),
+            bottomRow.heightAnchor.constraint(equalToConstant: 48),
         ])
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        guard !isScanning, finalRoom == nil else { return }
-        captureView.captureSession.run(configuration: RoomCaptureSession.Configuration())
-        isScanning = true
+        if rooms.isEmpty, case .betweenRooms = phase { startRoom() }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        if isScanning { captureView.captureSession.stop() }
-        isScanning = false
+        if case .scanning = phase { captureView.captureSession.stop() }
+        arSession.pause()
     }
 
+    private func startRoom() {
+        aiItems = []
+        captureView.captureSession.run(configuration: RoomCaptureSession.Configuration())
+        phase = .scanning
+        updateButtons()
+    }
+
+    private func updateButtons() {
+        switch phase {
+        case .scanning:
+            aiButton.isEnabled = !isAnalyzing
+            nextButton.isEnabled = true
+            nextButton.setTitle("Next Room", for: .normal)
+            doneButton.isEnabled = true
+            doneButton.setTitle("Done", for: .normal)
+        case .processing:
+            aiButton.isEnabled = false
+            nextButton.isEnabled = false
+            doneButton.isEnabled = false
+            doneButton.setTitle("Processing…", for: .normal)
+        case .betweenRooms:
+            aiButton.isEnabled = false
+            nextButton.isEnabled = true
+            nextButton.setTitle("Scan Next Room", for: .normal)
+            doneButton.isEnabled = !rooms.isEmpty
+            doneButton.setTitle("Done", for: .normal)
+        }
+    }
+
+    private func show(_ message: String) {
+        messageLabel.text = "  \(message)  "
+        messageLabel.isHidden = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            if self?.messageLabel.text == "  \(message)  " { self?.messageLabel.isHidden = true }
+        }
+    }
+
+    // MARK: Buttons
+
     @objc private func cancelTapped() {
-        if isScanning { captureView.captureSession.stop() }
-        isScanning = false
+        if case .scanning = phase { captureView.captureSession.stop() }
         onCancel?()
     }
 
-    @objc private func doneTapped() {
-        if isScanning {
-            // Stop scanning; RoomPlan then builds the final model and shows it.
-            captureView.captureSession.stop()
-            isScanning = false
-            doneButton.setTitle("Processing…", for: .normal)
-            doneButton.isEnabled = false
-        } else if let finalRoom {
-            onFinish?(finalRoom)
+    @objc private func nextTapped() {
+        switch phase {
+        case .scanning:
+            stopRoom(thenFinish: false)
+        case .betweenRooms:
+            startRoom()
+        case .processing:
+            break
         }
+    }
+
+    @objc private func doneTapped() {
+        switch phase {
+        case .scanning:
+            stopRoom(thenFinish: true)
+        case .betweenRooms:
+            onFinish?(rooms)
+        case .processing:
+            break
+        }
+    }
+
+    private func stopRoom(thenFinish: Bool) {
+        // Keep the AR session running so the next room shares its coordinates.
+        captureView.captureSession.stop(pauseARSession: false)
+        phase = .processing(thenFinish: thenFinish)
+        updateButtons()
+    }
+
+    @objc private func aiTapped() {
+        guard !isAnalyzing, let frame = arSession.currentFrame, let photo = FramePhoto(frame: frame) else { return }
+        isAnalyzing = true
+        aiButton.configuration?.showsActivityIndicator = true
+        updateButtons()
+        let roomName = currentRoomName
+        Task { @MainActor in
+            defer {
+                isAnalyzing = false
+                aiButton.configuration?.showsActivityIndicator = false
+                updateButtons()
+            }
+            do {
+                let found = try await ItemDetector.detectItems(inJPEG: photo.jpeg, roomName: roomName)
+                var added = 0
+                for detected in found {
+                    let position = photo.worldPosition(x: detected.x, y: detected.y, in: arSession)
+                        .map { Point2D(x: Double($0.x), y: Double($0.z)) }
+                    let duplicate = aiItems.contains { item in
+                        guard let position, let other = item.position else { return false }
+                        return item.name.caseInsensitiveCompare(detected.name) == .orderedSame
+                            && Geometry.distance(position, other) < 0.5
+                    }
+                    if duplicate { continue }
+                    aiItems.append(RoomItem(
+                        name: detected.name,
+                        category: detected.category,
+                        condition: detected.condition,
+                        notes: detected.notes,
+                        position: position,
+                        detectedAutomatically: true
+                    ))
+                    added += 1
+                }
+                show(added == 0 ? "No new items found. Try another angle." : "Added \(added) item\(added == 1 ? "" : "s").")
+            } catch {
+                show(error.localizedDescription)
+            }
+        }
+    }
+
+    private var currentRoomName: String {
+        rooms.isEmpty ? firstRoomName : "Room \(rooms.count + 1)"
     }
 
     // MARK: RoomCaptureViewDelegate
@@ -103,13 +236,28 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
     }
 
     func captureView(didPresent processedResult: CapturedRoom, error: Error?) {
+        guard case .processing(let thenFinish) = phase else { return }
         if let error {
-            doneButton.setTitle("Scan failed", for: .normal)
-            print("LiDAR scan failed: \(error)")
+            show("This room could not be processed: \(error.localizedDescription)")
+        } else {
+            var room = CapturedRoomConverter.room(from: processedResult, named: currentRoomName)
+            room.items += aiItems
+            let fileName = "\(room.id.uuidString).usdz"
+            do {
+                try processedResult.export(to: modelsDirectory.appendingPathComponent(fileName), exportOptions: .parametric)
+                room.modelFileName = fileName
+            } catch {
+                print("LiDAR scan: could not save 3D model: \(error)")
+            }
+            rooms.append(room)
+        }
+        aiItems = []
+        if thenFinish, !rooms.isEmpty {
+            onFinish?(rooms)
             return
         }
-        finalRoom = processedResult
-        doneButton.setTitle("Save Room", for: .normal)
-        doneButton.isEnabled = true
+        phase = .betweenRooms
+        updateButtons()
+        show("\(rooms.count) room\(rooms.count == 1 ? "" : "s") saved. Walk to the next room and tap Scan Next Room, or Done.")
     }
 }
