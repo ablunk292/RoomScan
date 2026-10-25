@@ -14,16 +14,37 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     @Published private(set) var finishedRooms: [Room] = []
     @Published private(set) var aimPoint: SIMD3<Float>?
     @Published private(set) var status = "Move your phone slowly to find the floor."
-    @Published private(set) var isAnalyzing = false
     /// AI scans that found something in the room being mapped, so the screen can remind the
     /// user to scan a room they are about to leave.
-    @Published private(set) var aiScansThisRoom = 0
+    @Published var aiScansThisRoom = 0
     /// Items the last AI scan added, shown so the user can see them and undo the scan.
-    @Published private(set) var lastAIAdded: [RoomItem] = []
+    @Published var lastAIAdded: [RoomItem] = []
     /// Whether the camera is tracking well; when not, `status` says what to do about it.
-    @Published private(set) var trackingIsNormal = false
+    @Published var trackingIsNormal = false
     /// Result of the last AI scan, shown briefly on screen.
     @Published var aiMessage: String?
+    /// Doors, windows and openings the AI found in the walls of the room being mapped.
+    @Published var openings: [Opening] = []
+
+    // Guided item scan, run after the corners are mapped (see GuidedItemScan.swift).
+    @Published var itemScanActive = false
+    @Published var scanTargets: [ScanTarget] = []
+    /// Index into `scanTargets` of what the user should point at; equal to the count when all are covered.
+    @Published var targetIndex = 0
+    @Published var targetsDone: Set<ScanTarget> = []
+    /// AI requests still waiting for an answer.
+    @Published var pendingRequests = 0
+    @Published var movingTooFast = false
+    @Published var scanGuidance = ""
+    var wallSamples: [[SampleState]] = []
+    var sampleNodes: [[SCNNode]] = []
+    var motion = MotionTracker()
+    var lastScanPublish: CFTimeInterval = 0
+    var scanRoomName = ""
+    /// Ceiling or floor photos waiting for the AI.
+    var inFlight: Set<ScanTarget> = []
+    /// Changes whenever a guided scan starts or stops, so late AI answers for an old one are dropped.
+    var scanSession = UUID()
 
     let sceneView = ARSCNView()
 
@@ -32,13 +53,13 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     private var segmentNodes: [SCNNode] = []
     private let liveSegment = CornerMeasureController.makeSegment(from: .zero, to: SIMD3<Float>(0, 0, 0.01), color: .white)
     /// Height of the floor in AR coordinates, once a floor plane has been found.
-    private var floorY: Float?
+    var floorY: Float?
     /// Where the crosshair meets the floor, smoothed every frame.
     private var smoothedAim: SIMD3<Float>?
     private var lastPublish: CFTimeInterval = 0
     private var closingSegment: SCNNode?
     private var updatePending = false
-    private var itemNodes: [UUID: SCNNode] = [:]
+    var itemNodes: [UUID: SCNNode] = [:]
 
     /// Distance from the last corner to the crosshair, in meters.
     var liveDistance: Double? {
@@ -126,52 +147,6 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         addItem(RoomItem(name: name), at: point)
     }
 
-    /// Takes a photo of what the camera sees and asks the AI to find and pin the items in it.
-    @MainActor
-    func scanItemsWithAI(roomName: String) async {
-        guard !isAnalyzing else { return }
-        guard let frame = sceneView.session.currentFrame, let photo = FramePhoto(frame: frame) else {
-            aiMessage = "Camera not ready yet."
-            return
-        }
-        isAnalyzing = true
-        defer { isAnalyzing = false }
-        do {
-            let detected = try await ItemDetector.detectItems(inJPEG: photo.jpeg, roomName: roomName,
-                                                                focus: DetectionPresets.shared.activeFocus)
-            var added = 0
-            lastAIAdded = []
-            for found in detected {
-                let position = photo.worldPosition(x: found.x, y: found.y, in: sceneView.session, floorY: floorY)
-                if isDuplicate(name: found.name, at: position) { continue }
-                let item = RoomItem(
-                    name: found.name,
-                    category: found.category,
-                    condition: found.condition,
-                    notes: found.notes,
-                    detectedAutomatically: true,
-                    photoFileName: photo.closeUp(of: found).flatMap { ItemPhotos.save($0) }
-                )
-                addItem(item, at: position)
-                lastAIAdded.append(item)
-                added += 1
-            }
-            aiScansThisRoom += 1
-            aiMessage = Self.summary(found: detected.count, added: added)
-        } catch {
-            lastAIAdded = []
-            aiMessage = error.localizedDescription
-        }
-        let shown = aiMessage
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(15))
-            if self?.aiMessage == shown {
-                self?.aiMessage = nil
-                self?.lastAIAdded = []
-            }
-        }
-    }
-
     /// Removes everything the last AI scan added, for when it picked up the wrong things.
     @MainActor
     func undoLastAIScan() {
@@ -200,7 +175,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         return "Found \(found) items, added \(added) new."
     }
 
-    private func addItem(_ item: RoomItem, at position: SIMD3<Float>?) {
+    func addItem(_ item: RoomItem, at position: SIMD3<Float>?) {
         var item = item
         if let position {
             item.position = Self.floorPoint(position)
@@ -213,7 +188,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     }
 
     /// The same thing seen again from another angle: same name, within half a meter.
-    private func isDuplicate(name: String, at position: SIMD3<Float>?) -> Bool {
+    func isDuplicate(name: String, at position: SIMD3<Float>?) -> Bool {
         guard let position else { return false }
         let point = Self.floorPoint(position)
         return items.contains { item in
@@ -229,7 +204,10 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     @discardableResult
     func finishCurrentRoom(named name: String) -> Bool {
         guard corners.count >= 3 else { return false }
-        finishedRooms.append(Room(name: name, method: .cornerTap, outline: corners.map(Self.floorPoint), items: items))
+        finishedRooms.append(Room(name: name, method: .cornerTap, outline: corners.map(Self.floorPoint),
+                                  openings: openings, items: items))
+        stopItemScan()
+        openings = []
 
         if let first = corners.first, let last = corners.last {
             segmentNodes.append(Self.makeSegment(from: last, to: first))
@@ -254,12 +232,13 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     func allRooms(currentName: String) -> [Room] {
         var rooms = finishedRooms
         if corners.count >= 3 {
-            rooms.append(Room(name: currentName, method: .cornerTap, outline: corners.map(Self.floorPoint), items: items))
+            rooms.append(Room(name: currentName, method: .cornerTap, outline: corners.map(Self.floorPoint),
+                              openings: openings, items: items))
         }
         return rooms
     }
 
-    private static func floorPoint(_ point: SIMD3<Float>) -> Point2D {
+    static func floorPoint(_ point: SIMD3<Float>) -> Point2D {
         Point2D(x: Double(point.x), y: Double(point.z))
     }
 
@@ -270,6 +249,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         updatePending = true
         DispatchQueue.main.async { [weak self] in
             self?.updateAim()
+            self?.updateItemScan()
             self?.updatePending = false
         }
     }

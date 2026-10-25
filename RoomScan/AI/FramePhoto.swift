@@ -53,14 +53,9 @@ struct FramePhoto {
         return UIImage(cgImage: cropped).jpegData(compressionQuality: 0.8)
     }
 
-    /// Where a point in the upright photo (fractions from the top-left) lands in the room,
-    /// found by casting a ray from where the camera was when the photo was taken.
-    ///
-    /// Ceilings rarely have a detected surface on phones without LiDAR, so when the ray hits
-    /// nothing and the floor height is known, the item is placed where the ray meets the floor
-    /// (looking down) or a ceiling `ceilingHeight` above it (looking up).
-    func worldPosition(x: Double, y: Double, in session: ARSession,
-                       floorY: Float? = nil, ceilingHeight: Float = 2.44) -> SIMD3<Float>? {
+    /// The line of sight from where the camera was through a point in the upright photo
+    /// (fractions from the top-left).
+    func ray(x: Double, y: Double) -> (origin: SIMD3<Float>, direction: SIMD3<Float>) {
         // The camera sensor is landscape; the photo was turned a quarter turn clockwise.
         let pixelX = Float(y * imageResolution.width)
         let pixelY = Float((1 - x) * imageResolution.height)
@@ -70,8 +65,20 @@ struct FramePhoto {
         let cx = intrinsics[2][0], cy = intrinsics[2][1]
         let cameraDirection = SIMD4<Float>((pixelX - cx) / fx, -(pixelY - cy) / fy, -1, 0)
         let rotated = cameraTransform * cameraDirection
-        let worldDirection = simd_normalize(SIMD3<Float>(rotated.x, rotated.y, rotated.z))
+        let direction = simd_normalize(SIMD3<Float>(rotated.x, rotated.y, rotated.z))
         let origin = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+        return (origin, direction)
+    }
+
+    /// Where a point in the upright photo (fractions from the top-left) lands in the room,
+    /// found by casting a ray from where the camera was when the photo was taken.
+    ///
+    /// Ceilings rarely have a detected surface on phones without LiDAR, so when the ray hits
+    /// nothing and the floor height is known, the item is placed where the ray meets the floor
+    /// (looking down) or a ceiling `ceilingHeight` above it (looking up).
+    func worldPosition(x: Double, y: Double, in session: ARSession,
+                       floorY: Float? = nil, ceilingHeight: Float = 2.44) -> SIMD3<Float>? {
+        let (origin, worldDirection) = ray(x: x, y: y)
 
         for target in [ARRaycastQuery.Target.existingPlaneGeometry, .estimatedPlane] {
             let query = ARRaycastQuery(origin: origin, direction: worldDirection, allowing: target, alignment: .any)

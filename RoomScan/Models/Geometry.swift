@@ -70,6 +70,24 @@ enum Geometry {
         return corners
     }
 
+    /// Shortest distance from a point to the line segment between two others.
+    static func distance(from point: Point2D, toSegment a: Point2D, _ b: Point2D) -> Double {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let lengthSquared = dx * dx + dy * dy
+        guard lengthSquared > 1e-9 else { return distance(point, a) }
+        let t = min(max(((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared, 0), 1)
+        return distance(point, Point2D(x: a.x + dx * t, y: a.y + dy * t))
+    }
+
+    /// Inside a polygon, or within `margin` of one of its edges.
+    static func isInside(_ polygon: [Point2D], _ point: Point2D, margin: Double) -> Bool {
+        guard polygon.count >= 3 else { return true }
+        if contains(polygon, point) { return true }
+        return polygon.indices.contains { index in
+            distance(from: point, toSegment: polygon[index], polygon[(index + 1) % polygon.count]) < margin
+        }
+    }
+
     struct Bounds {
         var minX: Double
         var minY: Double

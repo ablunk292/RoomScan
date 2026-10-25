@@ -24,13 +24,13 @@ struct WelcomeView: View {
              text: "Stand in the room and point the phone at the floor until a ring appears.",
              steps: ["Aim the + at a corner where two walls meet the floor.",
                      "Tap Add Corner. Go around the room in order.",
-                     "The walls and floor area are measured for you."]),
+                     "When every corner is marked, tap Room Mapped."]),
         Page(symbol: "sparkles",
              title: "Let AI find the items",
-             text: "AI Find Items looks at what the camera sees and adds each item with its condition and a photo.",
-             steps: ["Point at one wall and tap AI Find Items.",
-                     "Repeat for each wall, then tilt up for ceiling lights and vents.",
-                     "Use AI looks for to pick only certain things, like windows and doors."]),
+             text: "After the corners, the app guides you around the room. The AI adds each item with its condition and a photo, plus doors and windows on the plan.",
+             steps: ["Point at the wall glowing orange and hold still. Photos are taken for you.",
+                     "Each part turns green when the AI is done. Then turn to the next wall.",
+                     "Finish with the ceiling and the floor. Use AI looks for to pick only certain things."]),
         Page(symbol: "cart.badge.plus",
              title: "Add what the customer asks for",
              text: "After mapping, open a room to fix anything the AI missed and record customer requests.",
@@ -128,12 +128,16 @@ struct ScanHelpView: View {
                     tip("plus.viewfinder", "Aim the + at the spot where two walls meet the floor and tap Add Corner.")
                     tip("arrow.triangle.turn.up.right.diamond", "Go around the room in order. A sofa in a corner? Aim where the corner would be.")
                     tip("arrow.uturn.backward", "Wrong spot? Tap the undo arrow to remove the last corner.")
+                    tip("checkmark.circle.fill", "When every corner is marked, tap Room Mapped – Scan Items.")
                 }
-                Section("3. Find the items") {
-                    tip("sparkles", "Point at one wall and tap AI Find Items. Do the same for each wall.")
-                    tip("light.recessed", "Tilt up and scan the ceiling for lights, vents and smoke detectors.")
+                Section("3. Scan the items") {
+                    tip("rectangle.portrait.on.rectangle.portrait", "Point at the wall glowing orange. Stand back so a good part of it fits on screen, and hold still. The photo is taken for you.")
+                    tip("checkmark.seal", "Parts turn blue while the AI looks and green when done. Pan along the wall until it is all green.")
+                    tip("tortoise", "Move slowly. If you see Slow down, the picture would be blurry.")
+                    tip("light.recessed", "After the walls, tilt up at the ceiling, then down at the floor.")
+                    tip("forward", "Skip moves past a wall you can't reach. Snap Now takes a photo right away.")
                     tip("line.3.horizontal.decrease.circle", "Tap AI looks for to pick only certain things, like electrical or windows and doors.")
-                    tip("mappin.and.ellipse", "To add an item yourself, aim the + at it on the floor and tap the pin button.")
+                    tip("mappin.and.ellipse", "To add an item yourself, aim the + at it on the floor and tap the pin button before tapping Room Mapped.")
                 }
                 Section("4. Next room") {
                     tip("arrow.right.square", "Tap Next Room, name it, and walk slowly through the doorway with the camera on.")

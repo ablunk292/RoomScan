@@ -19,6 +19,9 @@ struct CornerMeasureScreen: View {
     /// Set when the user is leaving a room the AI has not looked at yet.
     @State private var aiReminder: LeaveAction?
     @State private var showingHelp = false
+    /// The user chose to finish this room without the AI (no API key), pinning items by hand.
+    @State private var mappedWithoutAI = false
+    @State private var askingForKey = false
 
     private enum LeaveAction: Identifiable {
         case nextRoom
@@ -36,14 +39,30 @@ struct CornerMeasureScreen: View {
 
     var body: some View {
         ZStack {
+            Color.black.ignoresSafeArea()
+            // The camera image is 3:4. Showing all of it, instead of filling the screen and
+            // cutting off the sides, shows exactly what the AI sees.
             ARViewContainer(view: controller.sceneView)
-                .ignoresSafeArea()
+                .aspectRatio(3.0 / 4.0, contentMode: .fit)
 
-            Image(systemName: "plus")
-                .font(.system(size: 28, weight: .light))
-                .foregroundStyle(.white)
-                .shadow(radius: 2)
-                .allowsHitTesting(false)
+            if !controller.itemScanActive {
+                Image(systemName: "plus")
+                    .font(.system(size: 28, weight: .light))
+                    .foregroundStyle(.white)
+                    .shadow(radius: 2)
+                    .allowsHitTesting(false)
+            }
+
+            if controller.movingTooFast {
+                Label("Slow down", systemImage: "tortoise.fill")
+                    .font(.title3.bold())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .background(Color.red.opacity(0.85), in: Capsule())
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
 
             VStack {
                 topBar
@@ -69,6 +88,7 @@ struct CornerMeasureScreen: View {
             TextField("Kitchen, Bedroom 2…", text: $nextRoomName)
             Button("Start") {
                 if controller.finishCurrentRoom(named: roomName) {
+                    mappedWithoutAI = false
                     let name = nextRoomName.trimmingCharacters(in: .whitespaces)
                     roomName = name.isEmpty ? "Room \(controller.finishedRooms.count + 1)" : name
                 }
@@ -78,12 +98,18 @@ struct CornerMeasureScreen: View {
         } message: {
             Text("\(roomName) is saved. Walk into the next room and map its corners.")
         }
-        .confirmationDialog("Find items in \(roomName) with AI?",
+        .alert("Add a Claude key to scan items", isPresented: $askingForKey) {
+            Button("Pin Items by Hand") { mappedWithoutAI = true }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The AI item scan needs a Claude API key, added in Settings on the home screen. For now you can aim the + at items and tap the pin button.")
+        }
+        .confirmationDialog("Scan the items in \(roomName) first?",
                             isPresented: Binding(get: { aiReminder != nil }, set: { if !$0 { aiReminder = nil } }),
                             titleVisibility: .visible,
                             presenting: aiReminder) { action in
-            Button("Scan Now") {
-                Task { await controller.scanItemsWithAI(roomName: roomName) }
+            Button("Scan Items") {
+                if !controller.itemScanActive { controller.startItemScan(roomName: roomName) }
             }
             Button(action == .done ? "Finish Without Scanning" : "Skip to Next Room") {
                 // Let the dialog close before the next-room prompt opens.
@@ -91,7 +117,9 @@ struct CornerMeasureScreen: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("AI Find Items hasn't looked at this room yet. Point at each wall, and up at the ceiling for lights and vents, then tap AI Find Items for each view.")
+            Text(controller.itemScanActive
+                 ? "Some walls, the ceiling or the floor haven't been scanned yet. Follow the orange highlight to finish."
+                 : "The AI hasn't looked at this room yet. It takes about a minute: you point at each wall in turn and it does the rest.")
         }
         .confirmationDialog("Discard this scan?", isPresented: $confirmingCancel, titleVisibility: .visible) {
             Button("Discard", role: .destructive) {
@@ -129,7 +157,7 @@ struct CornerMeasureScreen: View {
                 Spacer()
                 Button("Done") { tryLeave(.done) }
                     .buttonStyle(.borderedProminent)
-                    .disabled(controller.allRooms(currentName: roomName).isEmpty)
+                    .disabled(controller.allRooms(currentName: roomName).isEmpty || controller.pendingRequests > 0)
             }
             guideCard
             if let message = controller.aiMessage {
@@ -138,6 +166,12 @@ struct CornerMeasureScreen: View {
         }
         .sheet(isPresented: $showingHelp) {
             ScanHelpView()
+        }
+        .task(id: controller.aiMessage) {
+            // Each AI result shows for a few seconds, unless a newer one replaces it.
+            guard let shown = controller.aiMessage else { return }
+            try? await Task.sleep(for: .seconds(8))
+            if controller.aiMessage == shown { controller.dismissAIMessage() }
         }
     }
 
@@ -153,24 +187,27 @@ struct CornerMeasureScreen: View {
     private var step: Step {
         let corners = controller.corners.count
         let warning = controller.trackingIsNormal ? nil : controller.status
-        if controller.aimPoint == nil {
+        if controller.itemScanActive {
+            if controller.itemScanComplete || controller.currentTarget == nil {
+                return Step(number: 4, title: "Room done", detail: controller.scanGuidance)
+            }
+            return Step(number: 3, title: "Scan the items", detail: warning ?? controller.scanGuidance)
+        }
+        if mappedWithoutAI {
+            return Step(number: 4, title: "Room done",
+                        detail: "Aim the + at items on the floor and tap the pin button to add them. Then tap Next Room, or Done if this was the last room.")
+        }
+        if controller.aimPoint == nil, corners < 3 {
             return Step(number: 1, title: "Find the floor",
                         detail: warning ?? "Point the phone down at the floor and move it slowly side to side until a ring appears under the +.")
         }
-        if corners < 3 {
-            let detail = corners == 0
-                ? "Aim the + at a corner where two walls meet the floor, then tap Add Corner."
-                : "Corner \(corners) added. Follow the wall to the next corner, aim the + at it and tap Add Corner."
-            return Step(number: 2, title: "Mark the corners", detail: warning ?? detail)
+        let detail: String
+        switch corners {
+        case 0: detail = "Aim the + at a corner where two walls meet the floor, then tap Add Corner."
+        case 1, 2: detail = "Corner \(corners) added. Follow the wall to the next corner, aim the + at it and tap Add Corner."
+        default: detail = "Corner \(corners) added. Mark any corners left, then tap Room Mapped to scan the items."
         }
-        if controller.aiScansThisRoom == 0 {
-            let detail = APIKeyStore.hasKey
-                ? "Add any remaining corners. Then point at one wall and tap AI Find Items."
-                : "Add any remaining corners. Then aim the + at each item on the floor and tap the pin button. (Add a Claude key in Settings to let AI find items.)"
-            return Step(number: 3, title: "Find the items", detail: warning ?? detail)
-        }
-        return Step(number: 4, title: "Finish this room",
-                    detail: warning ?? "Scan the other walls and tilt up for the ceiling with AI Find Items. Then tap Next Room, or Done if this was the last room.")
+        return Step(number: 2, title: "Mark the corners", detail: warning ?? detail)
     }
 
     private var guideCard: some View {
@@ -200,6 +237,7 @@ struct CornerMeasureScreen: View {
         .padding(12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
         .animation(.default, value: step.number)
+        .animation(.default, value: controller.movingTooFast)
     }
 
     /// What the last AI scan did, with the items it added and a way to take them back.
@@ -234,10 +272,18 @@ struct CornerMeasureScreen: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
     }
 
+    @ViewBuilder
     private var bottomBar: some View {
-        VStack(spacing: 12) {
-            AIFocusButton()
+        if controller.itemScanActive {
+            scanBar
+        } else {
+            mappingBar
+        }
+    }
 
+    /// Mapping the corners, with Room Mapped once there are enough.
+    private var mappingBar: some View {
+        VStack(spacing: 12) {
             HStack(spacing: 16) {
                 stat("Corners", "\(controller.corners.count)")
                 if let distance = controller.liveDistance {
@@ -251,33 +297,21 @@ struct CornerMeasureScreen: View {
             .padding(10)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
 
-            HStack(spacing: 12) {
-                Button {
-                    Task { await controller.scanItemsWithAI(roomName: roomName) }
-                } label: {
-                    Group {
-                        if controller.isAnalyzing {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                Text("AI is looking…")
-                            }
-                        } else {
-                            Label("AI Find Items", systemImage: "sparkles")
-                        }
+            if controller.corners.count >= 3 {
+                if mappedWithoutAI {
+                    leaveButtons
+                } else {
+                    AIFocusButton()
+                    Button {
+                        startItemScan()
+                    } label: {
+                        Label("Room Mapped – Scan Items", systemImage: "checkmark.circle.fill")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 44)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 36)
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
                 }
-                .modifier(Emphasized(on: step.number == 3))
-                .disabled(controller.isAnalyzing)
-
-                Button {
-                    tryLeave(.nextRoom)
-                } label: {
-                    Label("Next Room", systemImage: "arrow.right.square")
-                        .frame(maxWidth: .infinity, minHeight: 36)
-                }
-                .modifier(Emphasized(on: step.number == 4))
-                .disabled(controller.corners.count < 3)
             }
 
             HStack(spacing: 12) {
@@ -297,7 +331,7 @@ struct CornerMeasureScreen: View {
                         .font(.headline)
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .modifier(Emphasized(on: step.number <= 2))
+                .modifier(Emphasized(on: step.number <= 2 && controller.corners.count < 3))
                 .disabled(controller.aimPoint == nil)
 
                 Button {
@@ -312,10 +346,108 @@ struct CornerMeasureScreen: View {
         }
     }
 
-    /// Reminds the user to run AI Find Items before leaving a room it has not seen.
+    /// The guided item scan: progress through the walls, ceiling and floor.
+    private var scanBar: some View {
+        VStack(spacing: 12) {
+            AIFocusButton()
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(controller.scanTargets, id: \.self) { target in
+                        targetChip(target)
+                    }
+                }
+                .padding(.horizontal, 2)
+            }
+
+            if controller.currentTarget != nil {
+                HStack(spacing: 12) {
+                    Button {
+                        controller.skipCurrentTarget()
+                    } label: {
+                        Label("Skip", systemImage: "forward")
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        controller.captureNow()
+                    } label: {
+                        Label("Snap Now", systemImage: "camera")
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        controller.stopItemScan()
+                    } label: {
+                        Label("Corners", systemImage: "ruler")
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .font(.subheadline)
+            } else {
+                leaveButtons
+            }
+        }
+    }
+
+    private var leaveButtons: some View {
+        HStack(spacing: 12) {
+            Button {
+                tryLeave(.nextRoom)
+            } label: {
+                Label("Next Room", systemImage: "arrow.right.square")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+
+            Button {
+                tryLeave(.done)
+            } label: {
+                Label("Done", systemImage: "checkmark")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+        }
+        .disabled(controller.pendingRequests > 0)
+    }
+
+    private func targetChip(_ target: CornerMeasureController.ScanTarget) -> some View {
+        let isCurrent = controller.currentTarget == target
+        let done = controller.targetsDone.contains(target)
+        let coverage = controller.coverage(of: target)
+        return HStack(spacing: 4) {
+            if done {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            } else if coverage > 0 {
+                ProgressView().controlSize(.mini)
+            }
+            Text(target.label)
+        }
+        .font(.caption.weight(isCurrent ? .bold : .regular))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(isCurrent ? AnyShapeStyle(Color.orange.opacity(0.85)) : AnyShapeStyle(.ultraThinMaterial), in: Capsule())
+        .foregroundStyle(isCurrent ? Color.white : Color.primary)
+    }
+
+    private func startItemScan() {
+        guard APIKeyStore.hasKey else {
+            askingForKey = true
+            return
+        }
+        controller.startItemScan(roomName: roomName)
+    }
+
+    /// Reminds the user to scan the items before leaving a room the AI has not finished.
     private func tryLeave(_ action: LeaveAction) {
         let roomInProgress = controller.corners.count >= 3
-        if roomInProgress, controller.aiScansThisRoom == 0, APIKeyStore.hasKey {
+        let scanned = controller.itemScanActive && controller.currentTarget == nil
+        if roomInProgress, !scanned, !mappedWithoutAI, APIKeyStore.hasKey {
             aiReminder = action
         } else {
             leave(action)

@@ -14,6 +14,18 @@ struct DetectedItem: Decodable {
     var top: Double
     var right: Double
     var bottom: Double
+    /// "door", "window" or "opening" when the item is a doorway or window in a wall,
+    /// so it can be drawn on the floor plan; "none" otherwise.
+    var opening: String?
+
+    var openingKind: OpeningKind? {
+        switch opening {
+        case "door": return .door
+        case "window": return .window
+        case "opening": return .opening
+        default: return nil
+        }
+    }
 }
 
 enum ItemDetectorError: LocalizedError {
@@ -69,7 +81,9 @@ enum ItemDetector {
         let focus = focus.trimmingCharacters(in: .whitespacesAndNewlines)
         let intro = """
         This photo was taken in "\(roomName)" during a property walkthrough by a contractor or \
-        inspector who documents what is in each room for a quote.
+        inspector who documents what is in each room for a quote. Only list things inside \
+        this room: leave out anything seen through a doorway, window or opening into another \
+        room or outdoors.
         """
         let what = focus.isEmpty ? everything : """
         The inspector only wants these kinds of things documented this time:
@@ -94,8 +108,9 @@ enum ItemDetector {
                 "top": ["type": "number"],
                 "right": ["type": "number"],
                 "bottom": ["type": "number"],
+                "opening": ["type": "string", "enum": ["none", "door", "window", "opening"]],
             ],
-            "required": ["name", "category", "condition", "notes", "x", "y", "left", "top", "right", "bottom"],
+            "required": ["name", "category", "condition", "notes", "x", "y", "left", "top", "right", "bottom", "opening"],
             "additionalProperties": false,
         ]
         return [
@@ -153,7 +168,10 @@ enum ItemDetector {
         (model, color, size, or problem) or an empty string, x and y: the center of the \
         item, and left, top, right and bottom: the edges of a box that just fits around the \
         item. Give all of these as fractions of the image width and height measured from the \
-        top-left corner (0 to 1).
+        top-left corner (0 to 1). Set opening to "door", "window" or "opening" (an open \
+        doorway or pass-through) for doors, windows and openings in a wall of this room, so \
+        they can be drawn on the floor plan, and "none" for everything else, including door \
+        handles, locks and blinds.
         """
 
     private static func errorMessage(from data: Data, status: Int) -> String {

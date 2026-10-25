@@ -293,7 +293,13 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
             show("This room could not be processed: \(error.localizedDescription)")
         } else {
             var room = CapturedRoomConverter.room(from: processedResult, named: currentRoomName)
-            room.items += aiItems
+            // Leave out things the AI saw through a doorway or window, outside this room.
+            let inside = aiItems.filter { item in
+                guard let position = item.position else { return true }
+                return Geometry.isInside(room.outline, position, margin: 0.4)
+            }
+            for item in aiItems where !inside.contains(item) { ItemPhotos.delete(item.photoFileName) }
+            room.items += inside
             let fileName = "\(room.id.uuidString).usdz"
             do {
                 try processedResult.export(to: modelsDirectory.appendingPathComponent(fileName), exportOptions: .parametric)
