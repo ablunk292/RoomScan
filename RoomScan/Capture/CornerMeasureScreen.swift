@@ -103,7 +103,9 @@ struct CornerMeasureScreen: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(controller.allRooms(currentName: roomName).isEmpty)
             }
-            Text(controller.aiMessage ?? controller.status)
+            Text(controller.aiMessage ?? (controller.aimPoint == nil
+                ? "Point the phone down at the floor and move slowly until the crosshair ring appears."
+                : controller.status))
                 .font(.subheadline)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 12)

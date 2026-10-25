@@ -23,7 +23,12 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     private let reticle = CornerMeasureController.makeReticle()
     private var cornerNodes: [SCNNode] = []
     private var segmentNodes: [SCNNode] = []
-    private var liveSegment: SCNNode?
+    private let liveSegment = CornerMeasureController.makeSegment(from: .zero, to: SIMD3<Float>(0, 0, 0.01), color: .white)
+    /// Height of the floor in AR coordinates, once a floor plane has been found.
+    private var floorY: Float?
+    /// Where the crosshair meets the floor, smoothed every frame.
+    private var smoothedAim: SIMD3<Float>?
+    private var lastPublish: CFTimeInterval = 0
     private var closingSegment: SCNNode?
     private var updatePending = false
 
@@ -44,6 +49,8 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         sceneView.automaticallyUpdatesLighting = true
         reticle.isHidden = true
         sceneView.scene.rootNode.addChildNode(reticle)
+        liveSegment.isHidden = true
+        sceneView.scene.rootNode.addChildNode(liveSegment)
 
         let coaching = ARCoachingOverlayView()
         coaching.session = sceneView.session
@@ -75,7 +82,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     // MARK: Corners
 
     func addCorner() {
-        guard let point = aimPoint else { return }
+        guard let point = smoothedAim else { return }
         // Keep every corner at the height of the first one, so small floor
         // detection errors do not tilt the room.
         var corner = point
@@ -107,7 +114,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     // MARK: Items
 
     func addItem(named name: String) {
-        guard let point = aimPoint else { return }
+        guard let point = smoothedAim else { return }
         addItem(RoomItem(name: name), at: point)
     }
 
@@ -218,6 +225,14 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         }
     }
 
+    func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
+        updateFloorHeight(from: anchors, cameraY: session.currentFrame?.camera.transform.columns.3.y)
+    }
+
+    func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+        updateFloorHeight(from: anchors, cameraY: session.currentFrame?.camera.transform.columns.3.y)
+    }
+
     func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
         let message: String
         switch camera.trackingState {
@@ -237,37 +252,71 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         DispatchQueue.main.async { self.status = message }
     }
 
-    private func updateAim() {
-        let center = CGPoint(x: sceneView.bounds.midX, y: sceneView.bounds.midY)
-        // Prefer real detected floor, fall back to an estimate while the floor is still being found.
-        let hit = raycast(from: center, target: .existingPlaneGeometry)
-            ?? raycast(from: center, target: .estimatedPlane)
-
-        guard let hit else {
-            aimPoint = nil
-            reticle.isHidden = true
-            liveSegment?.removeFromParentNode()
-            liveSegment = nil
-            return
-        }
-        var point = SIMD3<Float>(hit.worldTransform.columns.3.x, hit.worldTransform.columns.3.y, hit.worldTransform.columns.3.z)
-        if let first = corners.first { point.y = first.y }
-        aimPoint = point
-        reticle.simdPosition = point
-        reticle.isHidden = false
-
-        liveSegment?.removeFromParentNode()
-        liveSegment = nil
-        if let last = corners.last, simd_distance(last, point) > 0.01 {
-            let segment = Self.makeSegment(from: last, to: point, color: .white)
-            sceneView.scene.rootNode.addChildNode(segment)
-            liveSegment = segment
+    /// The floor is the lowest large flat surface well below the phone. Once known, the
+    /// crosshair is projected straight onto it, which is far steadier than per-frame
+    /// raycasts that jump between rough surface guesses.
+    private func updateFloorHeight(from anchors: [ARAnchor], cameraY: Float?) {
+        guard let cameraY else { return }
+        for case let plane as ARPlaneAnchor in anchors where plane.alignment == .horizontal {
+            let y = plane.transform.columns.3.y
+            let size = plane.planeExtent.width * plane.planeExtent.height
+            let looksLikeFloor = plane.classification == .floor || size > 0.5
+            guard looksLikeFloor, cameraY - y > 0.6 else { continue }
+            DispatchQueue.main.async {
+                if self.floorY == nil || y < self.floorY! { self.floorY = y }
+            }
         }
     }
 
-    private func raycast(from point: CGPoint, target: ARRaycastQuery.Target) -> ARRaycastResult? {
-        guard let query = sceneView.raycastQuery(from: point, allowing: target, alignment: .horizontal) else { return nil }
-        return sceneView.session.raycast(query).first
+    private func updateAim() {
+        guard let frame = sceneView.session.currentFrame else { return }
+        // Until the floor is found the coaching overlay asks the user to look around.
+        let height = corners.first?.y ?? floorY
+        var target: SIMD3<Float>?
+
+        if let height {
+            // The middle of the screen looks straight down the camera's -z axis.
+            let camera = frame.camera.transform
+            let origin = SIMD3<Float>(camera.columns.3.x, camera.columns.3.y, camera.columns.3.z)
+            let forward = -SIMD3<Float>(camera.columns.2.x, camera.columns.2.y, camera.columns.2.z)
+            if forward.y < -0.08 {
+                let distance = (height - origin.y) / forward.y
+                if distance > 0, distance < 12 { target = origin + forward * distance }
+            }
+        }
+
+        // Smooth out hand shake; jump straight to big moves.
+        if let target {
+            if let previous = smoothedAim, simd_distance(previous, target) < 0.4 {
+                smoothedAim = simd_mix(previous, target, SIMD3<Float>(repeating: 0.3))
+            } else {
+                smoothedAim = target
+            }
+        } else {
+            smoothedAim = nil
+        }
+
+        guard let point = smoothedAim else {
+            reticle.isHidden = true
+            liveSegment.isHidden = true
+            if aimPoint != nil { aimPoint = nil }
+            return
+        }
+        reticle.simdPosition = point
+        reticle.isHidden = false
+        if let last = corners.last, simd_distance(last, point) > 0.01 {
+            Self.place(liveSegment, from: last, to: point)
+            liveSegment.isHidden = false
+        } else {
+            liveSegment.isHidden = true
+        }
+
+        // Screen readouts only need about 10 updates a second; redrawing SwiftUI every frame stutters.
+        let now = CACurrentMediaTime()
+        if aimPoint == nil || now - lastPublish > 0.1 {
+            aimPoint = point
+            lastPublish = now
+        }
     }
 
     /// Faint line from the last corner back to the first, so the user sees the room close.
@@ -310,15 +359,21 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     }
 
     private static func makeSegment(from a: SIMD3<Float>, to b: SIMD3<Float>, color: UIColor = .systemYellow) -> SCNNode {
-        let length = simd_distance(a, b)
-        let cylinder = SCNCylinder(radius: 0.005, height: CGFloat(length))
+        let cylinder = SCNCylinder(radius: 0.005, height: 0.01)
         cylinder.firstMaterial?.diffuse.contents = color
         cylinder.firstMaterial?.lightingModel = .constant
         let node = SCNNode(geometry: cylinder)
+        place(node, from: a, to: b)
+        return node
+    }
+
+    /// Stretches a line node between two points.
+    private static func place(_ node: SCNNode, from a: SIMD3<Float>, to b: SIMD3<Float>) {
+        let length = simd_distance(a, b)
+        (node.geometry as? SCNCylinder)?.height = CGFloat(length)
         node.simdPosition = (a + b) / 2
         if length > 0.0001 {
             node.simdOrientation = simd_quatf(from: SIMD3<Float>(0, 1, 0), to: simd_normalize(b - a))
         }
-        return node
     }
 }
