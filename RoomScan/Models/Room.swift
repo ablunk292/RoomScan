@@ -65,6 +65,16 @@ struct RoomItem: Codable, Identifiable, Hashable {
     ]
 }
 
+/// A distance the user measured and saved, such as the length of a wall they plan to build.
+struct SavedMeasurement: Codable, Identifiable, Hashable {
+    var id = UUID()
+    var name: String
+    /// Meters.
+    var length: Double
+    var createdAt = Date()
+    var notes: String = ""
+}
+
 enum OpeningKind: String, Codable {
     case door
     case window
@@ -92,6 +102,13 @@ struct Room: Codable, Identifiable, Hashable {
     var notes: String = ""
     /// File name of the 3D model saved by a LiDAR scan, inside the store's models folder.
     var modelFileName: String?
+    /// Optional so rooms saved before measurements existed still load; use `savedMeasurements`.
+    var measurements: [SavedMeasurement]?
+
+    var savedMeasurements: [SavedMeasurement] {
+        get { measurements ?? [] }
+        set { measurements = newValue.isEmpty ? nil : newValue }
+    }
 
     var area: Double { Geometry.area(of: outline) }
     var perimeter: Double { Geometry.perimeter(of: outline) }

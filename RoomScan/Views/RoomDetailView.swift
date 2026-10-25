@@ -13,6 +13,9 @@ struct RoomDetailView: View {
     @State private var modelPreviewURL: URL?
     @State private var renaming = false
     @State private var newName = ""
+    @State private var measuringNow = false
+    @State private var renamingMeasurement: SavedMeasurement?
+    @State private var measurementName = ""
 
     private struct EditingItem: Identifiable {
         let item: RoomItem
@@ -93,6 +96,34 @@ struct RoomDetailView: View {
                 LabeledContent("Captured with", value: room.method.label)
             }
 
+            Section {
+                ForEach(room.savedMeasurements) { measurement in
+                    Button {
+                        measurementName = measurement.name
+                        renamingMeasurement = measurement
+                    } label: {
+                        LabeledContent(measurement.name, value: Units.length(measurement.length, feet: useFeet))
+                    }
+                    .foregroundStyle(.primary)
+                }
+                .onDelete { offsets in
+                    guard var updated = store.room(roomID, in: propertyID) else { return }
+                    var list = updated.savedMeasurements
+                    list.remove(atOffsets: offsets)
+                    updated.savedMeasurements = list
+                    store.update(updated, in: propertyID)
+                }
+                Button {
+                    measuringNow = true
+                } label: {
+                    Label("Take a Measurement", systemImage: "ruler")
+                }
+            } header: {
+                Text("Saved measurements")
+            } footer: {
+                Text("Measure anything with the camera, like the length of a wall you plan to build, and save it here with a name.")
+            }
+
             Section("Notes") {
                 NotesField(room: room) { store.update($0, in: propertyID) }
             }
@@ -127,6 +158,27 @@ struct RoomDetailView: View {
             )
         }
         .quickLookPreview($modelPreviewURL)
+        .fullScreenCover(isPresented: $measuringNow) {
+            MeasureScreen(roomName: room.name, onSave: { measurement in
+                guard var updated = store.room(roomID, in: propertyID) else { return }
+                updated.savedMeasurements.append(measurement)
+                store.update(updated, in: propertyID)
+            }, onClose: { measuringNow = false })
+        }
+        .alert("Rename measurement", isPresented: Binding(get: { renamingMeasurement != nil },
+                                                           set: { if !$0 { renamingMeasurement = nil } })) {
+            TextField("Name", text: $measurementName)
+            Button("Save") {
+                guard let measurement = renamingMeasurement, var updated = store.room(roomID, in: propertyID),
+                      let index = updated.savedMeasurements.firstIndex(where: { $0.id == measurement.id }) else { return }
+                let name = measurementName.trimmingCharacters(in: .whitespaces)
+                var list = updated.savedMeasurements
+                list[index].name = name.isEmpty ? measurement.name : name
+                updated.savedMeasurements = list
+                store.update(updated, in: propertyID)
+            }
+            Button("Cancel", role: .cancel) {}
+        }
         .alert("Rename room", isPresented: $renaming) {
             TextField("Room name", text: $newName)
             Button("Save") {
@@ -327,6 +379,11 @@ enum RoomReport {
             lines.append("")
             lines.append("Customer requested:")
             lines += requested.map { "• \($0.name) ×\($0.quantity)\(on($0, in: room))\($0.notes.isEmpty ? "" : " — \($0.notes)")" }
+        }
+        if !room.savedMeasurements.isEmpty {
+            lines.append("")
+            lines.append("Measurements:")
+            lines += room.savedMeasurements.map { "• \($0.name): \(Units.length($0.length, feet: useFeet))" }
         }
         if !room.notes.isEmpty {
             lines.append("")

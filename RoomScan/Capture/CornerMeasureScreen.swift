@@ -22,6 +22,7 @@ struct CornerMeasureScreen: View {
     /// The user chose to finish this room without the AI (no API key), pinning items by hand.
     @State private var mappedWithoutAI = false
     @State private var askingForKey = false
+    @State private var measuring = false
 
     private enum LeaveAction: Identifiable {
         case nextRoom
@@ -45,12 +46,23 @@ struct CornerMeasureScreen: View {
             ARViewContainer(view: controller.sceneView)
                 .aspectRatio(3.0 / 4.0, contentMode: .fit)
 
-            if !controller.itemScanActive {
-                Image(systemName: "plus")
-                    .font(.system(size: 28, weight: .light))
-                    .foregroundStyle(.white)
-                    .shadow(radius: 2)
+            Image(systemName: "plus")
+                .font(.system(size: 28, weight: .light))
+                .foregroundStyle(.white)
+                .shadow(radius: 2)
+                .allowsHitTesting(false)
+
+            if let angle = controller.turnAngle, !measuring {
+                // Points toward the part to scan when it is off screen.
+                Image(systemName: "arrow.right.circle.fill")
+                    .font(.system(size: 56))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, .orange)
+                    .shadow(radius: 4)
+                    .rotationEffect(.radians(-angle))
+                    .offset(x: cos(angle) * 120, y: -sin(angle) * 120)
                     .allowsHitTesting(false)
+                    .animation(.easeInOut(duration: 0.2), value: angle)
             }
 
             if controller.movingTooFast {
@@ -89,6 +101,7 @@ struct CornerMeasureScreen: View {
             Button("Start") {
                 if controller.finishCurrentRoom(named: roomName) {
                     mappedWithoutAI = false
+                    measuring = false
                     let name = nextRoomName.trimmingCharacters(in: .whitespaces)
                     roomName = name.isEmpty ? "Room \(controller.finishedRooms.count + 1)" : name
                 }
@@ -142,6 +155,14 @@ struct CornerMeasureScreen: View {
                     if hasWork { confirmingCancel = true } else { onCancel() }
                 }
                 .buttonStyle(.bordered)
+                Button {
+                    setMeasuring(!measuring)
+                } label: {
+                    Image(systemName: "ruler")
+                }
+                .buttonStyle(.bordered)
+                .tint(measuring ? Color.accentColor : nil)
+                .accessibilityLabel("Measure")
                 Spacer()
                 VStack(spacing: 0) {
                     Text(roomName).font(.headline)
@@ -187,6 +208,13 @@ struct CornerMeasureScreen: View {
     private var step: Step {
         let corners = controller.corners.count
         let warning = controller.trackingIsNormal ? nil : controller.status
+        if measuring {
+            return Step(number: 0, title: "Measure",
+                        detail: "Tap Set Point at each end of what you want to measure, then name it to save it to this room.")
+        }
+        if controller.measuringCeiling {
+            return Step(number: 3, title: "Ceiling height", detail: warning ?? controller.scanGuidance)
+        }
         if controller.itemScanActive {
             if controller.itemScanComplete || controller.currentTarget == nil {
                 return Step(number: 4, title: "Room done", detail: controller.scanGuidance)
@@ -205,7 +233,10 @@ struct CornerMeasureScreen: View {
         switch corners {
         case 0: detail = "Aim the + at a corner where two walls meet the floor, then tap Add Corner."
         case 1, 2: detail = "Corner \(corners) added. Follow the wall to the next corner, aim the + at it and tap Add Corner."
-        default: detail = "Corner \(corners) added. Mark any corners left, then tap Room Mapped to scan the items."
+        default:
+            detail = controller.roomClosed
+                ? "Room closed. Tap Room Mapped to scan the items."
+                : "Corner \(corners) added. Mark any corners left, then tap Room Mapped. No need to tap the first corner again."
         }
         return Step(number: 2, title: "Mark the corners", detail: warning ?? detail)
     }
@@ -213,13 +244,19 @@ struct CornerMeasureScreen: View {
     private var guideCard: some View {
         let step = step
         return HStack(alignment: .top, spacing: 12) {
-            Text("\(step.number)")
-                .font(.headline)
-                .foregroundStyle(.white)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(Color.accentColor))
+            Group {
+                if step.number == 0 {
+                    Image(systemName: "ruler")
+                } else {
+                    Text("\(step.number)")
+                }
+            }
+            .font(.headline)
+            .foregroundStyle(.white)
+            .frame(width: 30, height: 30)
+            .background(Circle().fill(Color.accentColor))
             VStack(alignment: .leading, spacing: 2) {
-                Text("Step \(step.number) of 4 · \(step.title)")
+                Text(step.number == 0 ? step.title : "Step \(step.number) of 4 · \(step.title)")
                     .font(.subheadline.bold())
                 Text(step.detail)
                     .font(.subheadline)
@@ -274,10 +311,50 @@ struct CornerMeasureScreen: View {
 
     @ViewBuilder
     private var bottomBar: some View {
-        if controller.itemScanActive {
+        if measuring {
+            MeasurePanel(tool: controller.measureTool, useFeet: useFeet, savedCount: controller.measurements.count,
+                         onSave: { controller.measurements.append($0) },
+                         onClose: { setMeasuring(false) })
+        } else if controller.measuringCeiling {
+            ceilingBar
+        } else if controller.itemScanActive {
             scanBar
         } else {
             mappingBar
+        }
+    }
+
+    private func setMeasuring(_ on: Bool) {
+        measuring = on
+        controller.measureTool.isShowing = on
+    }
+
+    /// Measuring the ceiling height at the top of a wall.
+    private var ceilingBar: some View {
+        VStack(spacing: 12) {
+            VStack(spacing: 2) {
+                Text("Ceiling height").font(.caption).foregroundStyle(.secondary)
+                Text(controller.liveCeilingHeight.map { Units.length(Double($0), feet: useFeet) } ?? "—")
+                    .font(.system(size: 34, weight: .bold, design: .rounded).monospacedDigit())
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+
+            Button {
+                controller.confirmCeilingHeight()
+            } label: {
+                Label("Set Ceiling Height", systemImage: "arrow.up.to.line")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(controller.liveCeilingHeight == nil)
+
+            Button("Skip (assume 8 ft)") {
+                controller.skipCeilingHeight()
+            }
+            .font(.subheadline)
         }
     }
 

@@ -36,13 +36,42 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     @Published var pendingRequests = 0
     @Published var movingTooFast = false
     @Published var scanGuidance = ""
-    var wallSamples: [[SampleState]] = []
-    var sampleNodes: [[SCNNode]] = []
+    /// The arrow direction on screen toward the part to scan, when it is out of view.
+    @Published var turnAngle: Double?
+    /// Asking the user to aim at the top of a wall to measure the ceiling height.
+    @Published var measuringCeiling = false
+    /// Height under the + while measuring the ceiling.
+    @Published var liveCeilingHeight: Float?
+    /// Ceiling height of the room being mapped, once measured. Kept for the next room, which
+    /// is usually the same.
+    @Published var ceilingHeight: Float?
+    /// Distances measured and saved in the room being mapped.
+    @Published var measurements: [SavedMeasurement] = []
+    var scanCells: [ScanTarget: [ScanCell]] = [:]
+    var targetNodes: [ScanTarget: SCNNode] = [:]
     var motion = MotionTracker()
-    var lastScanPublish: CFTimeInterval = 0
     var scanRoomName = ""
-    /// Ceiling or floor photos waiting for the AI.
-    var inFlight: Set<ScanTarget> = []
+    lazy var pointerNode: SCNNode = {
+        let ring = SCNTorus(ringRadius: 0.07, pipeRadius: 0.007)
+        ring.firstMaterial?.diffuse.contents = UIColor.white
+        ring.firstMaterial?.lightingModel = .constant
+        let node = SCNNode(geometry: ring)
+        let dot = SCNSphere(radius: 0.012)
+        dot.firstMaterial?.diffuse.contents = UIColor.white
+        dot.firstMaterial?.lightingModel = .constant
+        node.addChildNode(SCNNode(geometry: dot))
+        node.isHidden = true
+        sceneView.scene.rootNode.addChildNode(node)
+        return node
+    }()
+    lazy var measureTool: MeasureTool = {
+        let tool = MeasureTool(sceneView: sceneView)
+        tool.extraSurfaces = { [weak self] origin, direction in
+            self?.nearestWallPoint(origin: origin, direction: direction)
+        }
+        tool.floorY = { [weak self] in self?.corners.first?.y ?? self?.floorY }
+        return tool
+    }()
     /// Changes whenever a guided scan starts or stops, so late AI answers for an old one are dropped.
     var scanSession = UUID()
 
@@ -110,8 +139,18 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
 
     // MARK: Corners
 
+    /// Set when the user aimed back at the first corner, which closes the room instead of
+    /// adding another wall.
+    @Published var roomClosed = false
+
     func addCorner() {
         guard let point = smoothedAim else { return }
+        // Back at the first corner: the room is closed. Adding it again would make an extra wall.
+        if corners.count >= 3, let first = corners.first, simd_distance(first, point) < 0.3 {
+            roomClosed = true
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            return
+        }
         // Keep every corner at the height of the first one, so small floor
         // detection errors do not tilt the room.
         var corner = point
@@ -132,6 +171,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
 
     func undoCorner() {
         guard !corners.isEmpty else { return }
+        roomClosed = false
         corners.removeLast()
         cornerNodes.popLast()?.removeFromParentNode()
         if !segmentNodes.isEmpty, segmentNodes.count >= corners.count {
@@ -204,10 +244,12 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     @discardableResult
     func finishCurrentRoom(named name: String) -> Bool {
         guard corners.count >= 3 else { return false }
-        finishedRooms.append(Room(name: name, method: .cornerTap, outline: corners.map(Self.floorPoint),
-                                  openings: openings, items: items))
+        finishedRooms.append(currentRoom(named: name))
         stopItemScan()
         openings = []
+        measurements = []
+        roomClosed = false
+        measureTool.isShowing = false
 
         if let first = corners.first, let last = corners.last {
             segmentNodes.append(Self.makeSegment(from: last, to: first))
@@ -232,10 +274,16 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     func allRooms(currentName: String) -> [Room] {
         var rooms = finishedRooms
         if corners.count >= 3 {
-            rooms.append(Room(name: currentName, method: .cornerTap, outline: corners.map(Self.floorPoint),
-                              openings: openings, items: items))
+            rooms.append(currentRoom(named: currentName))
         }
         return rooms
+    }
+
+    private func currentRoom(named name: String) -> Room {
+        var room = Room(name: name, method: .cornerTap, outline: corners.map(Self.floorPoint),
+                        ceilingHeight: ceilingHeight.map(Double.init), openings: openings, items: items)
+        room.savedMeasurements = measurements
+        return room
     }
 
     static func floorPoint(_ point: SIMD3<Float>) -> Point2D {
@@ -250,6 +298,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         DispatchQueue.main.async { [weak self] in
             self?.updateAim()
             self?.updateItemScan()
+            self?.measureTool.update()
             self?.updatePending = false
         }
     }
@@ -304,6 +353,12 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
 
     private func updateAim() {
         guard let frame = sceneView.session.currentFrame else { return }
+        // The floor crosshair is only for marking corners.
+        if itemScanActive || measureTool.isShowing {
+            reticle.isHidden = true
+            liveSegment.isHidden = true
+            return
+        }
         // Until the floor is found the coaching overlay asks the user to look around.
         let height = corners.first?.y ?? floorY
         var target: SIMD3<Float>?

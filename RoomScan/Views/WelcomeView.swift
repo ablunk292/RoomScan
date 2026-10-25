@@ -131,13 +131,19 @@ struct ScanHelpView: View {
                     tip("checkmark.circle.fill", "When every corner is marked, tap Room Mapped – Scan Items.")
                 }
                 Section("3. Scan the items") {
-                    tip("rectangle.portrait.on.rectangle.portrait", "Point at the wall glowing orange. Stand back so a good part of it fits on screen, and hold still. The photo is taken for you.")
+                    tip("arrow.up.to.line", "First the ceiling height: aim the + where a wall meets the ceiling and tap Set Ceiling Height.")
+                    tip("rectangle.portrait.on.rectangle.portrait", "Put the + on an orange square and hold still. Stand back so a good part of the wall fits on screen. The photo is taken for you.")
+                    tip("arrow.right.circle", "If the orange part is off screen, an arrow shows which way to turn.")
                     tip("checkmark.seal", "Parts turn blue while the AI looks and green when done. Pan along the wall until it is all green.")
                     tip("tortoise", "Move slowly. If you see Slow down, the picture would be blurry.")
                     tip("light.recessed", "After the walls, tilt up at the ceiling, then down at the floor.")
                     tip("forward", "Skip moves past a wall you can't reach. Snap Now takes a photo right away.")
                     tip("line.3.horizontal.decrease.circle", "Tap AI looks for to pick only certain things, like electrical or windows and doors.")
                     tip("mappin.and.ellipse", "To add an item yourself, aim the + at it on the floor and tap the pin button before tapping Room Mapped.")
+                }
+                Section("Measure anything") {
+                    tip("ruler", "Tap the ruler at the top, then Set Point at each end. Name it to save it to the room, like \"new wall\" or \"window width\".")
+                    tip("list.bullet", "Saved measurements show on the room's page and in the export. You can also take more from there.")
                 }
                 Section("4. Next room") {
                     tip("arrow.right.square", "Tap Next Room, name it, and walk slowly through the doorway with the camera on.")

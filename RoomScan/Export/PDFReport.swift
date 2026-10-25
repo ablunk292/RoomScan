@@ -54,6 +54,13 @@ enum PDFReport {
                           photos: includePhotos, writer: &writer)
                 itemTable(title: "Customer requested", room: room, items: room.items.filter(\.isRequested),
                           photos: includePhotos, writer: &writer)
+                if !room.savedMeasurements.isEmpty {
+                    writer.space(6)
+                    writer.text("Measurements", font: .boldSystemFont(ofSize: 13))
+                    for measurement in room.savedMeasurements {
+                        writer.text("\(measurement.name): \(Units.length(measurement.length, feet: useFeet))", font: .systemFont(ofSize: 11))
+                    }
+                }
                 if !room.notes.isEmpty {
                     writer.space(6)
                     writer.text("Notes: \(room.notes)", font: .systemFont(ofSize: 11))

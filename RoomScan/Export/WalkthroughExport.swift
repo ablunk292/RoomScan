@@ -117,6 +117,10 @@ struct WalkthroughExport: Encodable {
                     item.notes,
                 ])
             }
+            for measurement in room.savedMeasurements {
+                rows.append([room.name, area, measurement.name, "Measurement", "", "", "", "", "",
+                             Units.length(measurement.length, feet: useFeet)])
+            }
         }
         return rows.map { $0.map(escape).joined(separator: ",") }.joined(separator: "\r\n")
     }
