@@ -144,7 +144,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
                 addItem(item, at: position)
                 added += 1
             }
-            aiMessage = added == 0 ? "No new items found. Try another angle." : "Added \(added) item\(added == 1 ? "" : "s")."
+            aiMessage = Self.summary(found: detected.count, added: added)
         } catch {
             aiMessage = error.localizedDescription
         }
@@ -153,6 +153,14 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
             try? await Task.sleep(for: .seconds(5))
             if self?.aiMessage == shown { self?.aiMessage = nil }
         }
+    }
+
+    /// What one AI scan did, for the status line.
+    static func summary(found: Int, added: Int) -> String {
+        if found == 0 { return "No items recognized. Step back so more of the room is in view." }
+        if added == 0 { return "Found \(found) items, all already on the list. Try another wall." }
+        if added == found { return "Added \(added) item\(added == 1 ? "" : "s")." }
+        return "Found \(found) items, added \(added) new."
     }
 
     private func addItem(_ item: RoomItem, at position: SIMD3<Float>?) {
@@ -172,7 +180,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         let point = Self.floorPoint(position)
         return items.contains { item in
             guard let other = item.position else { return false }
-            return item.name.caseInsensitiveCompare(name) == .orderedSame && Geometry.distance(point, other) < 0.5
+            return item.name.caseInsensitiveCompare(name) == .orderedSame && Geometry.distance(point, other) < 0.25
         }
     }
 

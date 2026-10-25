@@ -9,6 +9,8 @@ struct PropertyView: View {
     @AppStorage(Units.useFeetKey) private var useFeet = true
     @State private var showingAddRooms = false
     @State private var arranging = false
+    /// Room opened by tapping it on the house plan.
+    @State private var openRoom: Room.ID?
     @State private var nextMode: CaptureMode?
 
     var body: some View {
@@ -23,7 +25,15 @@ struct PropertyView: View {
         List {
             if !property.rooms.isEmpty {
                 Section {
-                    FloorPlanView(rooms: property.rooms, showDetails: false, useFeet: useFeet)
+                    FloorPlanView(
+                        rooms: property.rooms,
+                        showDetails: false,
+                        useFeet: useFeet,
+                        onTapItem: { roomID, _ in openRoom = roomID },
+                        onTapLocation: { point in
+                            openRoom = property.rooms.last(where: { Geometry.contains($0.outline, point) })?.id
+                        }
+                    )
                         .frame(height: 320)
                         .listRowInsets(EdgeInsets())
                     if property.rooms.count > 1 {
@@ -87,6 +97,9 @@ struct PropertyView: View {
             ToolbarItem(placement: .secondaryAction) {
                 EditButton()
             }
+        }
+        .navigationDestination(item: $openRoom) { roomID in
+            RoomDetailView(propertyID: propertyID, roomID: roomID)
         }
         .fullScreenCover(isPresented: $arranging) {
             ArrangeRoomsView(propertyID: propertyID)

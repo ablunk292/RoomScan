@@ -29,9 +29,23 @@ struct RoomDetailView: View {
     private func content(for room: Room) -> some View {
         List {
             Section {
-                FloorPlanView(rooms: [room], useFeet: useFeet)
-                    .frame(height: 300)
-                    .listRowInsets(EdgeInsets())
+                FloorPlanView(
+                    rooms: [room],
+                    useFeet: useFeet,
+                    onTapItem: { _, itemID in
+                        if let item = room.items.first(where: { $0.id == itemID }) {
+                            editingItem = EditingItem(item: item, isNew: false)
+                        }
+                    },
+                    onTapLocation: { point in
+                        editingItem = EditingItem(item: RoomItem(name: "", position: point), isNew: true)
+                    }
+                )
+                .frame(height: 300)
+                .listRowInsets(EdgeInsets())
+                Text("Tap a pin to open an item, or tap anywhere on the plan to add one there.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if let url = store.modelURL(for: room) {
                     Button {
                         modelPreviewURL = url

@@ -205,7 +205,7 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
                     let duplicate = aiItems.contains { item in
                         guard let position, let other = item.position else { return false }
                         return item.name.caseInsensitiveCompare(detected.name) == .orderedSame
-                            && Geometry.distance(position, other) < 0.5
+                            && Geometry.distance(position, other) < 0.25
                     }
                     if duplicate { continue }
                     aiItems.append(RoomItem(
@@ -218,7 +218,7 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
                     ))
                     added += 1
                 }
-                show(added == 0 ? "No new items found. Try another angle." : "Added \(added) item\(added == 1 ? "" : "s").")
+                show(CornerMeasureController.summary(found: found.count, added: added))
             } catch {
                 show(error.localizedDescription)
             }

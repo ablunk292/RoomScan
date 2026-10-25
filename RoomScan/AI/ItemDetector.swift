@@ -61,18 +61,26 @@ enum ItemDetector {
     private static func body(jpeg: Data, roomName: String) -> [String: Any] {
         let prompt = """
         This photo was taken in "\(roomName)" during a property walkthrough by a contractor or \
-        inspector who documents what is in each room and what the customer needs.
+        inspector who documents everything in each room for a quote.
 
-        List every distinct item worth documenting that you can clearly see: appliances, \
-        electrical (outlets, switches, panels, fixtures), plumbing fixtures, HVAC (vents, \
-        returns, thermostats, units), lighting, furniture, network and AV equipment, security \
-        devices, smoke and CO detectors, windows and doors, and any visible damage or wear \
-        (water stains, cracks, missing covers).
+        Be thorough: list every item you can see, including small and partly visible ones. \
+        Look for appliances; electrical (each outlet, switch, cover plate, panel, ceiling fan, \
+        light fixture, lamp); plumbing fixtures (sinks, faucets, toilets, tubs, water heaters); \
+        HVAC (each vent, return grille, thermostat, radiator, unit); network and AV (TVs, \
+        speakers, routers, cable jacks); security (cameras, sensors, keypads, doorbells); smoke \
+        and CO detectors; windows, doors and blinds; cabinets, counters, shelving and furniture; \
+        flooring and wall or ceiling finishes; and any visible damage or wear (water stains, \
+        cracks, holes, peeling paint, missing covers).
+
+        List every instance separately: three outlets are three items, each with its own \
+        position. Most room photos show many such items, so do not stop at the most obvious \
+        one, but only list things that are actually visible.
 
         For each item give a short name, a category, its apparent condition, a brief note \
         (model, color, size, or problem) or an empty string, and x and y: the center of the \
         item as a fraction of the image width and height measured from the top-left corner \
-        (0 to 1). List each physical item once. If nothing is clearly visible, return an empty list.
+        (0 to 1). Only return an empty list if the photo shows nothing at all, such as a \
+        blank wall up close or a blurred image.
         """
         let itemSchema: [String: Any] = [
             "type": "object",
@@ -92,7 +100,7 @@ enum ItemDetector {
             "max_tokens": 16000,
             "fallbacks": "default",
             "output_config": [
-                "effort": "low",
+                "effort": "medium",
                 "format": [
                     "type": "json_schema",
                     "schema": [
