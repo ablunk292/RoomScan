@@ -139,16 +139,20 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
 
     // MARK: Corners
 
-    /// Set when the user aimed back at the first corner, which closes the room instead of
-    /// adding another wall.
+    /// Set once the user comes back to the first corner. Only a closed room can be scanned
+    /// for items, so the AI never starts on a half-mapped room.
     @Published var roomClosed = false
+    /// The + is on the first corner, so tapping now closes the room.
+    @Published var aimAtFirstCorner = false
+
+    /// How close to the first corner the + must be to close the room.
+    private static let closeDistance: Float = 0.35
 
     func addCorner() {
-        guard let point = smoothedAim else { return }
+        guard !roomClosed, let point = smoothedAim else { return }
         // Back at the first corner: the room is closed. Adding it again would make an extra wall.
-        if corners.count >= 3, let first = corners.first, simd_distance(first, point) < 0.3 {
-            roomClosed = true
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        if corners.count >= 3, let first = corners.first, simd_distance(first, point) < Self.closeDistance {
+            closeRoom()
             return
         }
         // Keep every corner at the height of the first one, so small floor
@@ -166,13 +170,44 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         sceneView.scene.rootNode.addChildNode(node)
         cornerNodes.append(node)
         corners.append(corner)
+        if corners.count == 3, let first = cornerNodes.first {
+            // Show where to come back to when the room is done.
+            first.runAction(.repeatForever(.sequence([.scale(to: 2.2, duration: 0.5), .scale(to: 1, duration: 0.5)])),
+                            forKey: "pulse")
+            first.geometry?.firstMaterial?.diffuse.contents = UIColor.systemGreen
+        }
+    }
+
+    /// Joins the last corner to the first, finishing the room's outline.
+    func closeRoom() {
+        guard corners.count >= 3, !roomClosed else { return }
+        roomClosed = true
+        aimAtFirstCorner = false
+        if let first = cornerNodes.first {
+            first.removeAction(forKey: "pulse")
+            first.scale = SCNVector3(1, 1, 1)
+            first.geometry?.firstMaterial?.diffuse.contents = UIColor.systemYellow
+        }
+        liveSegment.isHidden = true
         updateClosingSegment()
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
     func undoCorner() {
         guard !corners.isEmpty else { return }
-        roomClosed = false
+        if roomClosed {
+            // Undo the closing first, keeping every corner.
+            roomClosed = false
+            updateClosingSegment()
+            cornerNodes.first?.geometry?.firstMaterial?.diffuse.contents = UIColor.systemGreen
+            return
+        }
         corners.removeLast()
+        if corners.count < 3, let first = cornerNodes.first {
+            first.removeAction(forKey: "pulse")
+            first.scale = SCNVector3(1, 1, 1)
+            first.geometry?.firstMaterial?.diffuse.contents = UIColor.systemYellow
+        }
         cornerNodes.popLast()?.removeFromParentNode()
         if !segmentNodes.isEmpty, segmentNodes.count >= corners.count {
             segmentNodes.popLast()?.removeFromParentNode()
@@ -249,7 +284,10 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         openings = []
         measurements = []
         roomClosed = false
+        aimAtFirstCorner = false
         measureTool.isShowing = false
+        cornerNodes.first?.removeAction(forKey: "pulse")
+        cornerNodes.first?.scale = SCNVector3(1, 1, 1)
 
         if let first = corners.first, let last = corners.last {
             segmentNodes.append(Self.makeSegment(from: last, to: first))
@@ -391,10 +429,18 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
             if aimPoint != nil { aimPoint = nil }
             return
         }
-        reticle.simdPosition = point
+        // Near the first corner, the + snaps to it so closing the room is easy.
+        var shown = point
+        var nearFirst = false
+        if !roomClosed, corners.count >= 3, let first = corners.first, simd_distance(first, point) < Self.closeDistance {
+            shown = first
+            nearFirst = true
+        }
+        if nearFirst != aimAtFirstCorner { aimAtFirstCorner = nearFirst }
+        reticle.simdPosition = shown
         reticle.isHidden = false
-        if let last = corners.last, simd_distance(last, point) > 0.01 {
-            Self.place(liveSegment, from: last, to: point)
+        if !roomClosed, let last = corners.last, simd_distance(last, shown) > 0.01 {
+            Self.place(liveSegment, from: last, to: shown)
             liveSegment.isHidden = false
         } else {
             liveSegment.isHidden = true
@@ -408,12 +454,12 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         }
     }
 
-    /// Faint line from the last corner back to the first, so the user sees the room close.
+    /// Line from the last corner back to the first, drawn once the room is closed.
     private func updateClosingSegment() {
         closingSegment?.removeFromParentNode()
         closingSegment = nil
-        guard corners.count >= 3, let first = corners.first, let last = corners.last else { return }
-        let segment = Self.makeSegment(from: last, to: first, color: UIColor.systemYellow.withAlphaComponent(0.4))
+        guard roomClosed, corners.count >= 3, let first = corners.first, let last = corners.last else { return }
+        let segment = Self.makeSegment(from: last, to: first)
         sceneView.scene.rootNode.addChildNode(segment)
         closingSegment = segment
     }

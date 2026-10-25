@@ -23,6 +23,8 @@ struct CornerMeasureScreen: View {
     @State private var mappedWithoutAI = false
     @State private var askingForKey = false
     @State private var measuring = false
+    /// Set when the user tries to leave a room whose outline is not closed yet.
+    @State private var closeReminder: LeaveAction?
 
     private enum LeaveAction: Identifiable {
         case nextRoom
@@ -110,6 +112,23 @@ struct CornerMeasureScreen: View {
             Button("Cancel", role: .cancel) { nextRoomName = "" }
         } message: {
             Text("\(roomName) is saved. Walk into the next room and map its corners.")
+        }
+        .alert("Close the room first", isPresented: Binding(get: { closeReminder != nil }, set: { if !$0 { closeReminder = nil } }),
+               presenting: closeReminder) { action in
+            if controller.corners.count >= 3 {
+                Button("Close It Now") {
+                    controller.closeRoom()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { tryLeave(action) }
+                }
+            }
+            if controller.corners.count < 3, action == .done, !controller.finishedRooms.isEmpty {
+                Button("Finish Without This Room") { leave(.done) }
+            }
+            Button("Keep Mapping", role: .cancel) {}
+        } message: { _ in
+            Text(controller.corners.count >= 3
+                 ? "Walk back to the first corner (pulsing green) and tap Close Room, or close it now with a straight wall from the last corner."
+                 : "\(roomName) needs at least 3 corners. Keep marking corners, then come back to the first one.")
         }
         .alert("Add a Claude key to scan items", isPresented: $askingForKey) {
             Button("Pin Items by Hand") { mappedWithoutAI = true }
@@ -234,9 +253,13 @@ struct CornerMeasureScreen: View {
         case 0: detail = "Aim the + at a corner where two walls meet the floor, then tap Add Corner."
         case 1, 2: detail = "Corner \(corners) added. Follow the wall to the next corner, aim the + at it and tap Add Corner."
         default:
-            detail = controller.roomClosed
-                ? "Room closed. Tap Room Mapped to scan the items."
-                : "Corner \(corners) added. Mark any corners left, then tap Room Mapped. No need to tap the first corner again."
+            if controller.roomClosed {
+                detail = "Room closed. Tap Room Mapped to scan the items."
+            } else if controller.aimAtFirstCorner {
+                detail = "You're back at the first corner. Tap Close Room to finish the outline."
+            } else {
+                detail = "Corner \(corners) added. Keep going around the room. To finish, aim the + back at the first corner (the pulsing green one) and tap Close Room."
+            }
         }
         return Step(number: 2, title: "Mark the corners", detail: warning ?? detail)
     }
@@ -374,7 +397,7 @@ struct CornerMeasureScreen: View {
             .padding(10)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
 
-            if controller.corners.count >= 3 {
+            if controller.roomClosed {
                 if mappedWithoutAI {
                     leaveButtons
                 } else {
@@ -404,12 +427,21 @@ struct CornerMeasureScreen: View {
                 Button {
                     controller.addCorner()
                 } label: {
-                    Label("Add Corner", systemImage: "plus.circle.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 44)
+                    Group {
+                        if controller.roomClosed {
+                            Label("Room Closed", systemImage: "checkmark")
+                        } else if controller.aimAtFirstCorner {
+                            Label("Close Room", systemImage: "arrow.triangle.capsulepath")
+                        } else {
+                            Label("Add Corner", systemImage: "plus.circle.fill")
+                        }
+                    }
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .modifier(Emphasized(on: step.number <= 2 && controller.corners.count < 3))
-                .disabled(controller.aimPoint == nil)
+                .modifier(Emphasized(on: !controller.roomClosed))
+                .tint(controller.aimAtFirstCorner ? Color.green : nil)
+                .disabled(controller.aimPoint == nil || controller.roomClosed)
 
                 Button {
                     askingItemName = true
@@ -522,6 +554,10 @@ struct CornerMeasureScreen: View {
 
     /// Reminds the user to scan the items before leaving a room the AI has not finished.
     private func tryLeave(_ action: LeaveAction) {
+        if !controller.corners.isEmpty, !controller.roomClosed {
+            closeReminder = action
+            return
+        }
         let roomInProgress = controller.corners.count >= 3
         let scanned = controller.itemScanActive && controller.currentTarget == nil
         if roomInProgress, !scanned, !mappedWithoutAI, APIKeyStore.hasKey {

@@ -103,7 +103,7 @@ extension CornerMeasureController {
     /// Returns false if the room does not have enough corners yet.
     @discardableResult
     func startItemScan(roomName: String) -> Bool {
-        guard corners.count >= 3 else { return false }
+        guard roomClosed, corners.count >= 3 else { return false }
         removeScanNodes()
         scanRoomName = roomName
         scanSession = UUID()

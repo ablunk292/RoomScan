@@ -24,7 +24,7 @@ struct WelcomeView: View {
              text: "Stand in the room and point the phone at the floor until a ring appears.",
              steps: ["Aim the + at a corner where two walls meet the floor.",
                      "Tap Add Corner. Go around the room in order.",
-                     "When every corner is marked, tap Room Mapped."]),
+                     "Finish back at the first corner and tap Close Room, then Room Mapped."]),
         Page(symbol: "sparkles",
              title: "Let AI find the items",
              text: "After the corners, the app guides you around the room. The AI adds each item with its condition and a photo, plus doors and windows on the plan.",
@@ -128,7 +128,7 @@ struct ScanHelpView: View {
                     tip("plus.viewfinder", "Aim the + at the spot where two walls meet the floor and tap Add Corner.")
                     tip("arrow.triangle.turn.up.right.diamond", "Go around the room in order. A sofa in a corner? Aim where the corner would be.")
                     tip("arrow.uturn.backward", "Wrong spot? Tap the undo arrow to remove the last corner.")
-                    tip("checkmark.circle.fill", "When every corner is marked, tap Room Mapped – Scan Items.")
+                    tip("arrow.triangle.capsulepath", "After the last corner, aim back at the first one (it pulses green) and tap Close Room. Then tap Room Mapped – Scan Items.")
                 }
                 Section("3. Scan the items") {
                     tip("arrow.up.to.line", "First the ceiling height: aim the + where a wall meets the ceiling and tap Set Ceiling Height.")
