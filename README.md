@@ -8,6 +8,8 @@ iPhone app for scanning rooms, documenting what is inside, and turning walkthrou
 - **Corner mapping (any recent iPhone, including iPhone 14):** point the crosshair at each floor corner and tap **Add Corner**. The app measures each wall as you go and works out floor area and perimeter. Tap the pin button to place an item yourself.
 - **AI Find Items:** point the camera at part of the room and tap **AI Find Items**. Claude lists what it sees (outlets, switches, vents, thermostats, fixtures, appliances, furniture, detectors, damage) with its condition, and each item is pinned where it is in the room. Repeat from a few angles; repeats of the same item are skipped. Needs a Claude API key in Settings.
 - **LiDAR scan (iPhone 12 Pro or newer Pro, iPad Pro):** uses Apple's RoomPlan to scan each room. Walls, doors, windows, ceiling height and furniture or appliances are found automatically, and a 3D model is saved. AI Find Items works here too.
+- **Clean floor plans:** walls that are nearly square are straightened, and neighboring rooms snap together at shared walls (a 4.5 inch interior wall is assumed). Angled walls more than 15° off are kept as measured.
+- **Arrange Rooms:** on the property page, drag rooms into place and turn them 90°; a room snaps to nearby walls when you let go. **Auto-align** straightens and snaps everything at once.
 - **Property page:** whole-house floor plan, total area, room list, and a shareable summary of every room.
 - **Room page:** floor plan with wall lengths and numbered item pins, measurements, existing items with their condition, customer-requested items, notes, and rename.
 - Feet or meters in Settings. Everything is saved on the phone.

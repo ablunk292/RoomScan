@@ -14,7 +14,7 @@ struct FloorPlanView: View {
         Canvas { context, size in
             let outlines = rooms.filter { $0.outline.count >= 2 }
             let allPoints = outlines.flatMap(\.outline) + (showDetails ? rooms.flatMap { $0.items.compactMap(\.position) } : [])
-            guard !outlines.isEmpty, let frame = Frame(points: allPoints, size: size, inset: showDetails ? 36 : 16) else {
+            guard !outlines.isEmpty, let frame = PlanFrame(points: allPoints, size: size, inset: showDetails ? 36 : 16) else {
                 context.draw(Text("No floor outline").foregroundStyle(.secondary),
                              at: CGPoint(x: size.width / 2, y: size.height / 2))
                 return
@@ -55,7 +55,7 @@ struct FloorPlanView: View {
         .accessibilityLabel("Floor plan of \(rooms.map(\.name).joined(separator: ", "))")
     }
 
-    private func drawDetails(in context: inout GraphicsContext, frame: Frame) {
+    private func drawDetails(in context: inout GraphicsContext, frame: PlanFrame) {
         for room in rooms where room.outline.count >= 2 {
             for (index, length) in room.wallLengths.enumerated() {
                 let a = room.outline[index]
@@ -86,7 +86,7 @@ enum ItemColors {
 }
 
 /// Fits floor coordinates (meters) into the drawing area, keeping proportions.
-private struct Frame {
+struct PlanFrame {
     let minX: Double
     let minY: Double
     let scale: Double
@@ -110,6 +110,12 @@ private struct Frame {
 
     func map(_ p: Point2D) -> CGPoint {
         CGPoint(x: offset.x + (p.x - minX) * scale, y: offset.y + (p.y - minY) * scale)
+    }
+
+    /// Screen point back to floor coordinates.
+    func unmap(_ point: CGPoint) -> Point2D {
+        Point2D(x: (Double(point.x) - Double(offset.x)) / scale + minX,
+                y: (Double(point.y) - Double(offset.y)) / scale + minY)
     }
 
     /// Spot for a wall's length label, just outside the room.

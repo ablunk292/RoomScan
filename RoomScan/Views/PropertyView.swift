@@ -8,6 +8,7 @@ struct PropertyView: View {
     @EnvironmentObject private var store: PropertyStore
     @AppStorage(Units.useFeetKey) private var useFeet = true
     @State private var showingAddRooms = false
+    @State private var arranging = false
     @State private var nextMode: CaptureMode?
 
     var body: some View {
@@ -25,6 +26,13 @@ struct PropertyView: View {
                     FloorPlanView(rooms: property.rooms, showDetails: false, useFeet: useFeet)
                         .frame(height: 320)
                         .listRowInsets(EdgeInsets())
+                    if property.rooms.count > 1 {
+                        Button {
+                            arranging = true
+                        } label: {
+                            Label("Arrange Rooms", systemImage: "hand.draw")
+                        }
+                    }
                 }
             }
 
@@ -80,6 +88,9 @@ struct PropertyView: View {
                 EditButton()
             }
         }
+        .fullScreenCover(isPresented: $arranging) {
+            ArrangeRoomsView(propertyID: propertyID)
+        }
         .sheet(isPresented: $showingAddRooms, onDismiss: {
             if let mode = nextMode { onAddRooms(mode) }
             nextMode = nil
@@ -87,7 +98,7 @@ struct PropertyView: View {
             NavigationStack {
                 Form {
                     Section {
-                        Text("Rooms added later have their own measurements, but they are placed beside the existing plan rather than lined up with it. For a connected floor plan, map the whole property in one go.")
+                        Text("Rooms added later are placed beside the existing plan. Use Arrange Rooms afterwards to drag them into place; they snap to neighboring walls.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }

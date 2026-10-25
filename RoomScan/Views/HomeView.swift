@@ -107,6 +107,7 @@ struct HomeView: View {
 
     private func finish(_ request: CaptureRequest, rooms: [Room]) {
         capture = nil
+        let rooms = Layout.tidy(rooms)
         switch request.target {
         case .newProperty(let name, let address):
             var property = Property(name: name, address: address)

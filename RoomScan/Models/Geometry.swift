@@ -89,4 +89,21 @@ enum Geometry {
         let count = Double(points.count)
         return Point2D(x: points.map(\.x).reduce(0, +) / count, y: points.map(\.y).reduce(0, +) / count)
     }
+
+    /// Whether a point is inside a polygon (even-odd rule).
+    static func contains(_ polygon: [Point2D], _ point: Point2D) -> Bool {
+        guard polygon.count >= 3 else { return false }
+        var inside = false
+        var j = polygon.count - 1
+        for i in polygon.indices {
+            let a = polygon[i]
+            let b = polygon[j]
+            if (a.y > point.y) != (b.y > point.y),
+               point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x {
+                inside.toggle()
+            }
+            j = i
+        }
+        return inside
+    }
 }
