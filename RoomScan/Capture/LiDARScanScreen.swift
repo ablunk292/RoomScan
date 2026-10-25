@@ -1,4 +1,5 @@
 import ARKit
+import Combine
 import RoomPlan
 import SwiftUI
 import UIKit
@@ -48,6 +49,8 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
     private let nextButton = UIButton(configuration: .gray())
     private let doneButton = UIButton(configuration: .filled())
     private let messageLabel = UILabel()
+    private let focusButton = UIButton(configuration: .gray())
+    private var focusWatch: AnyCancellable?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -67,6 +70,15 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
         nextButton.addTarget(self, action: #selector(nextTapped), for: .touchUpInside)
         doneButton.setTitle("Done", for: .normal)
         doneButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
+        focusButton.configuration?.buttonSize = .small
+        focusButton.configuration?.cornerStyle = .capsule
+        focusButton.configuration?.image = UIImage(systemName: "line.3.horizontal.decrease.circle")
+        focusButton.configuration?.imagePadding = 6
+        focusButton.addTarget(self, action: #selector(focusTapped), for: .touchUpInside)
+        focusWatch = DetectionPresets.shared.$activeFocus.sink { [weak self] _ in
+            // The published value changes just before it is stored, so read the name afterwards.
+            DispatchQueue.main.async { self?.updateFocusTitle() }
+        }
 
         messageLabel.textColor = .white
         messageLabel.font = .preferredFont(forTextStyle: .subheadline)
@@ -82,7 +94,7 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
         bottomRow.spacing = 8
         bottomRow.distribution = .fillEqually
 
-        for subview in [cancelButton, messageLabel, bottomRow] as [UIView] {
+        for subview in [cancelButton, messageLabel, focusButton, bottomRow] as [UIView] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(subview)
         }
@@ -92,7 +104,10 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
             cancelButton.topAnchor.constraint(equalTo: guide.topAnchor, constant: 8),
             messageLabel.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 24),
             messageLabel.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -24),
-            messageLabel.bottomAnchor.constraint(equalTo: bottomRow.topAnchor, constant: -12),
+            messageLabel.bottomAnchor.constraint(equalTo: focusButton.topAnchor, constant: -12),
+            focusButton.centerXAnchor.constraint(equalTo: guide.centerXAnchor),
+            focusButton.leadingAnchor.constraint(greaterThanOrEqualTo: guide.leadingAnchor, constant: 16),
+            focusButton.bottomAnchor.constraint(equalTo: bottomRow.topAnchor, constant: -10),
             bottomRow.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 16),
             bottomRow.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
             bottomRow.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -12),
@@ -150,8 +165,18 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
 
     // MARK: Buttons
 
+    private func updateFocusTitle() {
+        focusButton.configuration?.title = "AI looks for: \(DetectionPresets.shared.activeName)"
+        focusButton.configuration?.titleLineBreakMode = .byTruncatingTail
+    }
+
+    @objc private func focusTapped() {
+        present(UIHostingController(rootView: AIFocusPicker()), animated: true)
+    }
+
     @objc private func cancelTapped() {
         if case .scanning = phase { captureView.captureSession.stop() }
+        (rooms.flatMap(\.items) + aiItems).forEach { ItemPhotos.delete($0.photoFileName) }
         onCancel?()
     }
 
@@ -190,6 +215,7 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
         aiButton.configuration?.showsActivityIndicator = true
         updateButtons()
         let roomName = currentRoomName
+        let focus = DetectionPresets.shared.activeFocus
         Task { @MainActor in
             defer {
                 isAnalyzing = false
@@ -197,7 +223,7 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
                 updateButtons()
             }
             do {
-                let found = try await ItemDetector.detectItems(inJPEG: photo.jpeg, roomName: roomName)
+                let found = try await ItemDetector.detectItems(inJPEG: photo.jpeg, roomName: roomName, focus: focus)
                 var added = 0
                 for detected in found {
                     let position = photo.worldPosition(x: detected.x, y: detected.y, in: arSession)
@@ -214,7 +240,8 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
                         condition: detected.condition,
                         notes: detected.notes,
                         position: position,
-                        detectedAutomatically: true
+                        detectedAutomatically: true,
+                        photoFileName: photo.closeUp(of: detected).flatMap { ItemPhotos.save($0) }
                     ))
                     added += 1
                 }

@@ -16,12 +16,41 @@ struct FloorPlanView: View {
 
     private var outlines: [Room] { rooms.filter { $0.outline.count >= 2 } }
 
-    private var placedItems: [(room: Room, index: Int, item: RoomItem, position: Point2D)] {
+    private struct PlacedItem {
+        let room: Room
+        let index: Int
+        let item: RoomItem
+        let position: Point2D
+    }
+
+    private var placedItems: [PlacedItem] {
         rooms.flatMap { room in
             room.items.enumerated().compactMap { index, item in
-                item.position.map { (room: room, index: index, item: item, position: $0) }
+                item.position.map { PlacedItem(room: room, index: index, item: item, position: $0) }
             }
         }
+    }
+
+    /// Where each pin is drawn. On a single room's plan, items sitting on another item (a phone
+    /// on a desk) are fanned out around that item's pin so both can be seen and tapped.
+    private func pins(in frame: PlanFrame) -> [(placed: PlacedItem, point: CGPoint, parent: CGPoint?)] {
+        let base = placedItems.map { (placed: $0, point: frame.map($0.position), parent: CGPoint?.none) }
+        guard showDetails else { return base }
+        var result = base
+        var fanned: [UUID: Int] = [:]
+        for i in result.indices {
+            let child = result[i].placed
+            guard let parentID = child.item.parentID,
+                  let parent = base.first(where: { $0.placed.room.id == child.room.id && $0.placed.item.id == parentID }),
+                  hypot(parent.point.x - result[i].point.x, parent.point.y - result[i].point.y) < pinRadius * 2 else { continue }
+            let k = fanned[parentID, default: 0]
+            fanned[parentID] = k + 1
+            let angle = -Double.pi / 4 + Double(k) * Double.pi / 3
+            let distance = Double(pinRadius) * 2.4
+            result[i].point = CGPoint(x: parent.point.x + cos(angle) * distance, y: parent.point.y + sin(angle) * distance)
+            result[i].parent = parent.point
+        }
+        return result
     }
 
     private func planFrame(for size: CGSize) -> PlanFrame? {
@@ -60,13 +89,12 @@ struct FloorPlanView: View {
 
     private func handleTap(at location: CGPoint, frame: PlanFrame) {
         let touchRadius = max(pinRadius, 14)
-        let nearest = placedItems.min { a, b in
-            hypot(frame.map(a.position).x - location.x, frame.map(a.position).y - location.y)
-                < hypot(frame.map(b.position).x - location.x, frame.map(b.position).y - location.y)
+        let nearest = pins(in: frame).min { a, b in
+            hypot(a.point.x - location.x, a.point.y - location.y) < hypot(b.point.x - location.x, b.point.y - location.y)
         }
         if let nearest, let onTapItem,
-           hypot(frame.map(nearest.position).x - location.x, frame.map(nearest.position).y - location.y) <= touchRadius {
-            onTapItem(nearest.room.id, nearest.item.id)
+           hypot(nearest.point.x - location.x, nearest.point.y - location.y) <= touchRadius {
+            onTapItem(nearest.placed.room.id, nearest.placed.item.id)
         } else {
             onTapLocation?(frame.unmap(location))
         }
@@ -114,13 +142,22 @@ struct FloorPlanView: View {
             }
         }
 
-        for placed in placedItems {
-            let center = frame.map(placed.position)
+        let allPins = pins(in: frame)
+        for pin in allPins {
+            guard let parent = pin.parent else { continue }
+            var link = Path()
+            link.move(to: parent)
+            link.addLine(to: pin.point)
+            context.stroke(link, with: .color(.secondary), lineWidth: 1.5)
+        }
+        for pin in allPins {
+            let center = pin.point
             let r = pinRadius
             let circle = Path(ellipseIn: CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2))
-            context.fill(circle, with: .color(ItemColors.color(for: placed.item)))
+            context.fill(circle, with: .color(ItemColors.color(for: pin.placed.item)))
             if showDetails {
-                context.draw(Text("\(placed.index + 1)").font(.caption2.bold()).foregroundStyle(.white), at: center)
+                context.stroke(circle, with: .color(.white), lineWidth: 1.5)
+                context.draw(Text("\(pin.placed.index + 1)").font(.caption2.bold()).foregroundStyle(.white), at: center)
             }
         }
     }

@@ -8,6 +8,8 @@ struct RoomDetailView: View {
     @EnvironmentObject private var store: PropertyStore
     @AppStorage(Units.useFeetKey) private var useFeet = true
     @State private var editingItem: EditingItem?
+    /// Item to open once the current editor has closed, such as a new item on top of it.
+    @State private var nextItem: EditingItem?
     @State private var modelPreviewURL: URL?
     @State private var renaming = false
     @State private var newName = ""
@@ -43,7 +45,7 @@ struct RoomDetailView: View {
                 )
                 .frame(height: 300)
                 .listRowInsets(EdgeInsets())
-                Text("Tap a pin to open an item, or tap anywhere on the plan to add one there.")
+                Text("Tap a pin to open an item, or tap anywhere on the plan to add one there. To add something on top of an item, like a phone on a desk, open the item and tap Add Item on Top.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let url = store.modelURL(for: room) {
@@ -105,12 +107,17 @@ struct RoomDetailView: View {
                 }
             }
         }
-        .sheet(item: $editingItem) { editing in
+        .sheet(item: $editingItem, onDismiss: {
+            editingItem = nextItem
+            nextItem = nil
+        }) { editing in
             ItemEditorView(
                 item: editing.item,
                 isNew: editing.isNew,
+                room: room,
                 onSave: { saved in save(saved, in: roomID) },
-                onDelete: editing.isNew ? nil : { delete(editing.item.id, in: roomID) }
+                onDelete: editing.isNew ? nil : { delete(editing.item.id, in: roomID) },
+                onOpen: { item, isNew in nextItem = EditingItem(item: item, isNew: isNew) }
             )
         }
         .quickLookPreview($modelPreviewURL)
@@ -130,13 +137,16 @@ struct RoomDetailView: View {
     private func itemSection(_ title: String, room: Room, items: [RoomItem]) -> some View {
         if !items.isEmpty {
             Section(title) {
-                ForEach(items) { item in
+                ForEach(room.itemsNested(items), id: \.item.id) { entry in
                     Button {
-                        editingItem = EditingItem(item: item, isNew: false)
+                        editingItem = EditingItem(item: entry.item, isNew: false)
                     } label: {
-                        ItemRow(item: item, number: (room.items.firstIndex(of: item) ?? 0) + 1)
+                        ItemRow(item: entry.item,
+                                number: (room.items.firstIndex(of: entry.item) ?? 0) + 1,
+                                parentName: room.item(entry.item.parentID)?.name)
                     }
                     .foregroundStyle(.primary)
+                    .padding(.leading, CGFloat(entry.depth) * 24)
                 }
             }
         }
@@ -154,7 +164,12 @@ struct RoomDetailView: View {
 
     private func delete(_ itemID: UUID, in roomID: Room.ID) {
         guard var room = store.room(roomID, in: propertyID) else { return }
+        ItemPhotos.delete(room.item(itemID)?.photoFileName)
         room.items.removeAll { $0.id == itemID }
+        // Whatever sat on the deleted item stays in the room on its own.
+        for index in room.items.indices where room.items[index].parentID == itemID {
+            room.items[index].parentID = nil
+        }
         store.update(room, in: propertyID)
     }
 }
@@ -162,6 +177,14 @@ struct RoomDetailView: View {
 private struct ItemRow: View {
     let item: RoomItem
     let number: Int
+    var parentName: String?
+
+    private var details: String {
+        var parts = [item.category]
+        if !item.isRequested { parts.append(item.condition.label) }
+        if let parentName { parts.insert("On \(parentName)", at: 0) }
+        return parts.joined(separator: " · ")
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -173,11 +196,18 @@ private struct ItemRow: View {
                 .opacity(item.position == nil ? 0.4 : 1)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.quantity > 1 ? "\(item.name) ×\(item.quantity)" : item.name)
-                Text(item.isRequested ? item.category : "\(item.category) · \(item.condition.label)")
+                Text(details)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if let photo = ItemPhotos.image(named: item.photoFileName) {
+                Image(uiImage: photo)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 44, height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
             if item.detectedAutomatically {
                 Image(systemName: "sparkles")
                     .foregroundStyle(.secondary)
@@ -276,18 +306,22 @@ enum RoomReport {
         if !existing.isEmpty {
             lines.append("")
             lines.append("Existing items:")
-            lines += existing.map { "• \($0.name) ×\($0.quantity) (\($0.condition.label))\($0.notes.isEmpty ? "" : " — \($0.notes)")" }
+            lines += existing.map { "• \($0.name) ×\($0.quantity) (\($0.condition.label))\(on($0, in: room))\($0.notes.isEmpty ? "" : " — \($0.notes)")" }
         }
         let requested = room.items.filter(\.isRequested)
         if !requested.isEmpty {
             lines.append("")
             lines.append("Customer requested:")
-            lines += requested.map { "• \($0.name) ×\($0.quantity)\($0.notes.isEmpty ? "" : " — \($0.notes)")" }
+            lines += requested.map { "• \($0.name) ×\($0.quantity)\(on($0, in: room))\($0.notes.isEmpty ? "" : " — \($0.notes)")" }
         }
         if !room.notes.isEmpty {
             lines.append("")
             lines.append("Notes: \(room.notes)")
         }
         return lines.joined(separator: "\n")
+    }
+
+    private static func on(_ item: RoomItem, in room: Room) -> String {
+        room.item(item.parentID).map { ", on \($0.name)" } ?? ""
     }
 }

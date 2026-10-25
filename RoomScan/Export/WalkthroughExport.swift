@@ -72,7 +72,8 @@ struct WalkthroughExport: Encodable {
                                    description: "\(Units.area(room.area, feet: useFeet)) floor area"))
             for item in quotable {
                 let action = item.isRequested ? "Customer request" : item.condition.label
-                let description = [action, item.category, item.notes].filter { !$0.isEmpty }.joined(separator: " · ")
+                let placement = room.item(item.parentID).map { "On \($0.name)" } ?? ""
+                let description = [action, item.category, placement, item.notes].filter { !$0.isEmpty }.joined(separator: " · ")
                 lines.append(QuoteLine(itemType: "product", productName: item.name, description: description,
                                        quantity: Double(item.quantity), unitPrice: 0))
             }
@@ -99,12 +100,12 @@ struct WalkthroughExport: Encodable {
     /// One row per item, for Excel, Numbers or Google Sheets.
     static func csv(for property: Property, useFeet: Bool) -> String {
         let header = ["Room", "Room area", "Item", "Category", "Quantity", "Condition",
-                      "Customer requested", "Found by AI", "Notes"]
+                      "Customer requested", "Found by AI", "On top of", "Notes"]
         var rows = [header]
         for room in property.rooms {
             let area = Units.area(room.area, feet: useFeet)
             if room.items.isEmpty {
-                rows.append([room.name, area, "", "", "", "", "", "", room.notes])
+                rows.append([room.name, area, "", "", "", "", "", "", "", room.notes])
             }
             for item in room.items {
                 rows.append([
@@ -112,6 +113,7 @@ struct WalkthroughExport: Encodable {
                     item.isRequested ? "" : item.condition.label,
                     item.isRequested ? "Yes" : "No",
                     item.detectedAutomatically ? "Yes" : "No",
+                    room.item(item.parentID)?.name ?? "",
                     item.notes,
                 ])
             }

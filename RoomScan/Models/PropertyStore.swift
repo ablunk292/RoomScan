@@ -1,6 +1,6 @@
 import Foundation
 
-/// Keeps properties on the phone as a JSON file, with LiDAR 3D models saved next to it.
+/// Keeps properties on the phone as a JSON file, with LiDAR 3D models and item photos saved next to it.
 @MainActor
 final class PropertyStore: ObservableObject {
     @Published private(set) var properties: [Property] = []
@@ -66,6 +66,7 @@ final class PropertyStore: ObservableObject {
         if let url = modelURL(for: room) {
             try? FileManager.default.removeItem(at: url)
         }
+        room.items.forEach { ItemPhotos.delete($0.photoFileName) }
     }
 
     private func load(documents: URL) {

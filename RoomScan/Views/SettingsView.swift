@@ -46,6 +46,7 @@ struct SettingsView: View {
                         }
                         .disabled(keyText.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
+                    NavigationLink("AI Presets") { PresetListView() }
                 } header: {
                     Text("AI item detection")
                 } footer: {

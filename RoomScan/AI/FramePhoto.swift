@@ -28,6 +28,31 @@ struct FramePhoto {
         imageResolution = frame.camera.imageResolution
     }
 
+    /// A close-up of one found item, cut from the photo with some of the room around it so
+    /// it is clear where the item is.
+    func closeUp(of item: DetectedItem) -> Data? {
+        guard let image = UIImage(data: jpeg)?.cgImage else { return nil }
+        let width = Double(image.width), height = Double(image.height)
+        let left = min(max(min(item.left, item.right), 0), 1)
+        let right = min(max(max(item.left, item.right), 0), 1)
+        let top = min(max(min(item.top, item.bottom), 0), 1)
+        let bottom = min(max(max(item.top, item.bottom), 0), 1)
+
+        // Pad the box by half its size on each side, and never cut less than a third of the photo.
+        var boxWidth = max((right - left) * 2, 1.0 / 3)
+        var boxHeight = max((bottom - top) * 2, 1.0 / 3)
+        boxWidth = min(boxWidth, 1)
+        boxHeight = min(boxHeight, 1)
+        let centerX = right > left ? (left + right) / 2 : item.x
+        let centerY = bottom > top ? (top + bottom) / 2 : item.y
+        let originX = min(max(centerX - boxWidth / 2, 0), 1 - boxWidth)
+        let originY = min(max(centerY - boxHeight / 2, 0), 1 - boxHeight)
+
+        let rect = CGRect(x: originX * width, y: originY * height, width: boxWidth * width, height: boxHeight * height).integral
+        guard let cropped = image.cropping(to: rect) else { return nil }
+        return UIImage(cgImage: cropped).jpegData(compressionQuality: 0.8)
+    }
+
     /// Where a point in the upright photo (fractions from the top-left) lands in the room,
     /// found by casting a ray from where the camera was when the photo was taken.
     func worldPosition(x: Double, y: Double, in session: ARSession) -> SIMD3<Float>? {

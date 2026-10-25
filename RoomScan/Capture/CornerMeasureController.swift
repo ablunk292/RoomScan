@@ -129,7 +129,8 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         isAnalyzing = true
         defer { isAnalyzing = false }
         do {
-            let detected = try await ItemDetector.detectItems(inJPEG: photo.jpeg, roomName: roomName)
+            let detected = try await ItemDetector.detectItems(inJPEG: photo.jpeg, roomName: roomName,
+                                                                focus: DetectionPresets.shared.activeFocus)
             var added = 0
             for found in detected {
                 let position = photo.worldPosition(x: found.x, y: found.y, in: sceneView.session)
@@ -139,7 +140,8 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
                     category: found.category,
                     condition: found.condition,
                     notes: found.notes,
-                    detectedAutomatically: true
+                    detectedAutomatically: true,
+                    photoFileName: photo.closeUp(of: found).flatMap { ItemPhotos.save($0) }
                 )
                 addItem(item, at: position)
                 added += 1

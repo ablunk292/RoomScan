@@ -69,7 +69,10 @@ struct CornerMeasureScreen: View {
             Text("\(roomName) is saved. Walk into the next room and map its corners.")
         }
         .confirmationDialog("Discard this scan?", isPresented: $confirmingCancel, titleVisibility: .visible) {
-            Button("Discard", role: .destructive, action: onCancel)
+            Button("Discard", role: .destructive) {
+                (controller.finishedRooms.flatMap(\.items) + controller.items).forEach { ItemPhotos.delete($0.photoFileName) }
+                onCancel()
+            }
         } message: {
             Text("The rooms mapped in this session will not be saved.")
         }
@@ -117,6 +120,8 @@ struct CornerMeasureScreen: View {
 
     private var bottomBar: some View {
         VStack(spacing: 12) {
+            AIFocusButton()
+
             HStack(spacing: 16) {
                 stat("Corners", "\(controller.corners.count)")
                 if let distance = controller.liveDistance {

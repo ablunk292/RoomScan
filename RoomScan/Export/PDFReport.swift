@@ -64,16 +64,26 @@ enum PDFReport {
         guard !items.isEmpty else { return }
         writer.space(6)
         writer.text(title, font: .boldSystemFont(ofSize: 13))
-        for item in items {
+        for entry in room.itemsNested(items) {
+            let item = entry.item
             let number = (room.items.firstIndex(of: item) ?? 0) + 1
             var line = "\(number).  \(item.name)"
             if item.quantity > 1 { line += " ×\(item.quantity)" }
             var details = [item.category]
             if !item.isRequested { details.append(item.condition.label) }
+            if let parent = room.item(item.parentID) { details.insert("On \(parent.name)", at: 0) }
             if !item.notes.isEmpty { details.append(item.notes) }
             line += "  —  " + details.joined(separator: " · ")
-            writer.text(line, font: .systemFont(ofSize: 11))
+            writer.row(line, font: .systemFont(ofSize: 11), photo: thumbnail(of: item),
+                       indent: CGFloat(entry.depth) * 16)
         }
+    }
+
+    /// A small copy of an item's photo, so the PDF does not carry full-size photos.
+    private static func thumbnail(of item: RoomItem) -> UIImage? {
+        guard let photo = ItemPhotos.image(named: item.photoFileName), photo.size.width > 0, photo.size.height > 0 else { return nil }
+        let scale = min(1, max(240 / photo.size.width, 180 / photo.size.height))
+        return photo.preparingThumbnail(of: CGSize(width: photo.size.width * scale, height: photo.size.height * scale)) ?? photo
     }
 
     /// Draws the same floor plan the app shows, in light colors for paper.
@@ -118,6 +128,41 @@ enum PDFReport {
                 context: nil
             )
             y += ceil(size.height) + 4
+        }
+
+        /// A line of text with an optional photo to its left.
+        mutating func row(_ string: String, font: UIFont, photo: UIImage?, indent: CGFloat) {
+            let photoSize = CGSize(width: 80, height: 60)
+            let textX = PDFReport.margin + indent + (photo == nil ? 0 : photoSize.width + 10)
+            let textWidth = PDFReport.margin + PDFReport.contentWidth - textX
+            let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.black]
+            let textHeight = ceil((string as NSString).boundingRect(
+                with: CGSize(width: textWidth, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: attributes,
+                context: nil
+            ).height)
+            let height = max(textHeight, photo == nil ? 0 : photoSize.height)
+            if y + height > PDFReport.page.height - PDFReport.margin { newPage() }
+            if let photo {
+                // Fill the frame without stretching, cropping the photo's edges if needed.
+                let frame = CGRect(x: PDFReport.margin + indent, y: y, width: photoSize.width, height: photoSize.height)
+                let scale = max(frame.width / photo.size.width, frame.height / photo.size.height)
+                let drawn = CGSize(width: photo.size.width * scale, height: photo.size.height * scale)
+                let cg = context.cgContext
+                cg.saveGState()
+                cg.clip(to: frame)
+                photo.draw(in: CGRect(x: frame.midX - drawn.width / 2, y: frame.midY - drawn.height / 2,
+                                      width: drawn.width, height: drawn.height))
+                cg.restoreGState()
+            }
+            (string as NSString).draw(
+                with: CGRect(x: textX, y: y, width: textWidth, height: textHeight),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: attributes,
+                context: nil
+            )
+            y += height + 6
         }
 
         mutating func image(_ image: UIImage) {

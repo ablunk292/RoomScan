@@ -54,6 +54,10 @@ struct RoomItem: Codable, Identifiable, Hashable {
     var position: Point2D?
     var dimensions: Dimensions3D?
     var detectedAutomatically: Bool = false
+    /// Photo of the item where it sits in the room, inside the photos folder (see ItemPhotos).
+    var photoFileName: String?
+    /// The item this one sits on or belongs with, such as the desk under a phone.
+    var parentID: UUID?
 
     static let categories = [
         "Appliance", "Electrical", "Plumbing", "HVAC", "Lighting", "Furniture",
@@ -92,4 +96,52 @@ struct Room: Codable, Identifiable, Hashable {
     var area: Double { Geometry.area(of: outline) }
     var perimeter: Double { Geometry.perimeter(of: outline) }
     var wallLengths: [Double] { Geometry.edgeLengths(of: outline) }
+
+    func item(_ id: UUID?) -> RoomItem? {
+        guard let id else { return nil }
+        return items.first { $0.id == id }
+    }
+
+    /// Items that sit on the given item.
+    func items(on parent: RoomItem) -> [RoomItem] {
+        items.filter { $0.parentID == parent.id }
+    }
+
+    /// The given item and everything stacked on it, at any depth.
+    func itemAndEverythingOn(_ item: RoomItem) -> Set<UUID> {
+        var found: Set<UUID> = [item.id]
+        var added = true
+        while added {
+            added = false
+            for other in items where !found.contains(other.id) {
+                if let parent = other.parentID, found.contains(parent) {
+                    found.insert(other.id)
+                    added = true
+                }
+            }
+        }
+        return found
+    }
+
+    /// Items in list order, with each item followed by the items sitting on it.
+    func itemsNested(_ subset: [RoomItem]) -> [(item: RoomItem, depth: Int)] {
+        let ids = Set(subset.map(\.id))
+        var result: [(item: RoomItem, depth: Int)] = []
+        var visited: Set<UUID> = []
+        func visit(_ item: RoomItem, depth: Int) {
+            guard visited.insert(item.id).inserted else { return }
+            result.append((item, depth))
+            for child in items(on: item) where ids.contains(child.id) {
+                visit(child, depth: depth + 1)
+            }
+        }
+        for item in subset where item.parentID.map({ !ids.contains($0) || self.item($0) == nil }) ?? true {
+            visit(item, depth: 0)
+        }
+        // Anything left over (for example, items stacked in a loop) still shows up.
+        for item in subset where !visited.contains(item.id) {
+            visit(item, depth: 0)
+        }
+        return result
+    }
 }

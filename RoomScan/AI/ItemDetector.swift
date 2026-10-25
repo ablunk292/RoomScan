@@ -1,7 +1,8 @@
 import Foundation
 
-/// An item Claude found in a photo. `x` and `y` are where its center is in the photo,
-/// as fractions of the width and height from the top-left corner.
+/// An item Claude found in a photo. `x` and `y` are where its center is in the photo, and
+/// `left`, `top`, `right` and `bottom` the edges of a box around it, all as fractions of the
+/// width and height from the top-left corner.
 struct DetectedItem: Decodable {
     var name: String
     var category: String
@@ -9,6 +10,10 @@ struct DetectedItem: Decodable {
     var notes: String
     var x: Double
     var y: Double
+    var left: Double
+    var top: Double
+    var right: Double
+    var bottom: Double
 }
 
 enum ItemDetectorError: LocalizedError {
@@ -31,7 +36,9 @@ enum ItemDetector {
     private static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
     private static let model = "claude-opus-5-5"
 
-    static func detectItems(inJPEG jpeg: Data, roomName: String) async throws -> [DetectedItem] {
+    /// `focus` limits the search to what the user asked for, such as "windows and door handles".
+    /// Empty means everything worth documenting.
+    static func detectItems(inJPEG jpeg: Data, roomName: String, focus: String = "") async throws -> [DetectedItem] {
         guard let key = APIKeyStore.key else { throw ItemDetectorError.missingKey }
 
         var request = URLRequest(url: endpoint)
@@ -41,7 +48,7 @@ enum ItemDetector {
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body(jpeg: jpeg, roomName: roomName))
+        request.httpBody = try JSONSerialization.data(withJSONObject: body(jpeg: jpeg, roomName: roomName, focus: focus))
 
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -58,30 +65,22 @@ enum ItemDetector {
         return try JSONDecoder().decode(ItemList.self, from: json).items
     }
 
-    private static func body(jpeg: Data, roomName: String) -> [String: Any] {
-        let prompt = """
+    private static func body(jpeg: Data, roomName: String, focus: String) -> [String: Any] {
+        let focus = focus.trimmingCharacters(in: .whitespacesAndNewlines)
+        let intro = """
         This photo was taken in "\(roomName)" during a property walkthrough by a contractor or \
-        inspector who documents everything in each room for a quote.
-
-        Be thorough: list every item you can see, including small and partly visible ones. \
-        Look for appliances; electrical (each outlet, switch, cover plate, panel, ceiling fan, \
-        light fixture, lamp); plumbing fixtures (sinks, faucets, toilets, tubs, water heaters); \
-        HVAC (each vent, return grille, thermostat, radiator, unit); network and AV (TVs, \
-        speakers, routers, cable jacks); security (cameras, sensors, keypads, doorbells); smoke \
-        and CO detectors; windows, doors and blinds; cabinets, counters, shelving and furniture; \
-        flooring and wall or ceiling finishes; and any visible damage or wear (water stains, \
-        cracks, holes, peeling paint, missing covers).
-
-        List every instance separately: three outlets are three items, each with its own \
-        position. Most room photos show many such items, so do not stop at the most obvious \
-        one, but only list things that are actually visible.
-
-        For each item give a short name, a category, its apparent condition, a brief note \
-        (model, color, size, or problem) or an empty string, and x and y: the center of the \
-        item as a fraction of the image width and height measured from the top-left corner \
-        (0 to 1). Only return an empty list if the photo shows nothing at all, such as a \
-        blank wall up close or a blurred image.
+        inspector who documents what is in each room for a quote.
         """
+        let what = focus.isEmpty ? everything : """
+        The inspector only wants these kinds of things documented this time:
+
+        \(focus)
+
+        List only items that fit that description, and leave out everything else, however \
+        prominent. Within it, be thorough: include small and partly visible items. If nothing \
+        in the photo fits, return an empty list.
+        """
+        let prompt = intro + "\n\n" + what + "\n\n" + instructions
         let itemSchema: [String: Any] = [
             "type": "object",
             "properties": [
@@ -91,8 +90,12 @@ enum ItemDetector {
                 "notes": ["type": "string"],
                 "x": ["type": "number"],
                 "y": ["type": "number"],
+                "left": ["type": "number"],
+                "top": ["type": "number"],
+                "right": ["type": "number"],
+                "bottom": ["type": "number"],
             ],
-            "required": ["name", "category", "condition", "notes", "x", "y"],
+            "required": ["name", "category", "condition", "notes", "x", "y", "left", "top", "right", "bottom"],
             "additionalProperties": false,
         ]
         return [
@@ -127,6 +130,31 @@ enum ItemDetector {
             ]],
         ]
     }
+
+    /// What to look for when the user has not narrowed it down.
+    private static let everything = """
+        Be thorough: list every item you can see, including small and partly visible ones. \
+        Look for appliances; electrical (each outlet, switch, cover plate, panel, ceiling fan, \
+        light fixture, lamp); plumbing fixtures (sinks, faucets, toilets, tubs, water heaters); \
+        HVAC (each vent, return grille, thermostat, radiator, unit); network and AV (TVs, \
+        speakers, routers, cable jacks); security (cameras, sensors, keypads, doorbells); smoke \
+        and CO detectors; windows, doors and blinds; cabinets, counters, shelving and furniture; \
+        flooring and wall or ceiling finishes; and any visible damage or wear (water stains, \
+        cracks, holes, peeling paint, missing covers). Most room photos show many such items, \
+        so do not stop at the most obvious one. Only return an empty list if the photo shows \
+        nothing at all, such as a blank wall up close or a blurred image.
+        """
+
+    private static let instructions = """
+        List every instance separately: three outlets are three items, each with its own \
+        position. Only list things that are actually visible.
+
+        For each item give a short name, a category, its apparent condition, a brief note \
+        (model, color, size, or problem) or an empty string, x and y: the center of the \
+        item, and left, top, right and bottom: the edges of a box that just fits around the \
+        item. Give all of these as fractions of the image width and height measured from the \
+        top-left corner (0 to 1).
+        """
 
     private static func errorMessage(from data: Data, status: Int) -> String {
         if let error = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
