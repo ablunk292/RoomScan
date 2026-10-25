@@ -19,6 +19,16 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    LabeledContent("LiDAR scanning", value: LiDARSupport.isAvailable ? "Available" : "Not available")
+                } header: {
+                    Text("This iPhone")
+                } footer: {
+                    if !LiDARSupport.isAvailable {
+                        Text(LiDARSupport.explanation)
+                    }
+                }
+
+                Section {
                     if hasKey {
                         LabeledContent("Claude API key", value: "Saved")
                         Button("Remove Key", role: .destructive) {

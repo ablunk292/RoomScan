@@ -11,7 +11,7 @@ enum CaptureMode: String, Identifiable {
 /// What a capture session is for: a brand-new property, or more rooms for an existing one.
 struct CaptureRequest: Identifiable {
     enum Target {
-        case newProperty(name: String, address: String)
+        case newProperty(name: String, address: String, customer: String)
         case existing(Property.ID)
     }
 
@@ -31,6 +31,8 @@ struct HomeView: View {
     /// Chosen in the New Property sheet; opened once the sheet has finished closing,
     /// since SwiftUI cannot present a full-screen view while a sheet is dismissing.
     @State private var nextCapture: CaptureRequest?
+    @AppStorage("lidarNoticeShown") private var lidarNoticeShown = false
+    @State private var showingLiDARNotice = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -87,6 +89,16 @@ struct HomeView: View {
             .fullScreenCover(item: $capture) { request in
                 captureScreen(for: request)
             }
+            .onAppear {
+                if !RoomCaptureSession.isSupported, !lidarNoticeShown {
+                    showingLiDARNotice = true
+                }
+            }
+            .alert("This iPhone doesn't have LiDAR", isPresented: $showingLiDARNotice) {
+                Button("OK") { lidarNoticeShown = true }
+            } message: {
+                Text(LiDARSupport.explanation)
+            }
         }
     }
 
@@ -109,8 +121,9 @@ struct HomeView: View {
         capture = nil
         let rooms = Layout.tidy(rooms)
         switch request.target {
-        case .newProperty(let name, let address):
+        case .newProperty(let name, let address, let customer):
             var property = Property(name: name, address: address)
+            property.customerName = customer.isEmpty ? nil : customer
             property.rooms = rooms
             store.add(property)
             path = [property.id]
@@ -151,6 +164,7 @@ struct NewPropertyView: View {
 
     @State private var name = ""
     @State private var address = ""
+    @State private var customer = ""
     @State private var firstRoom = "Living Room"
 
     var body: some View {
@@ -159,6 +173,7 @@ struct NewPropertyView: View {
                 Section("Property") {
                     TextField(defaultName, text: $name)
                     TextField("Address (optional)", text: $address)
+                    TextField("Customer name (optional)", text: $customer)
                 }
                 Section {
                     TextField("First room", text: $firstRoom)
@@ -171,7 +186,8 @@ struct NewPropertyView: View {
                     onStart(CaptureRequest(
                         mode: mode,
                         target: .newProperty(name: trimmedName.isEmpty ? defaultName : trimmedName,
-                                             address: address.trimmingCharacters(in: .whitespaces)),
+                                             address: address.trimmingCharacters(in: .whitespaces),
+                                             customer: customer.trimmingCharacters(in: .whitespaces)),
                         firstRoomName: trimmedRoom.isEmpty ? "Room 1" : trimmedRoom
                     ))
                 }
@@ -182,6 +198,12 @@ struct NewPropertyView: View {
     }
 }
 
+enum LiDARSupport {
+    static var isAvailable: Bool { RoomCaptureSession.isSupported }
+
+    static let explanation = "You can still map rooms by tapping each floor corner, and AI Find Items still recognizes what is in each room. Automatic 3D room scanning needs a LiDAR sensor, found on iPhone 12 Pro and newer Pro models and on iPad Pro."
+}
+
 /// The two ways to map rooms, with LiDAR offered only on phones that have it.
 struct CaptureModeSection: View {
     let onChoose: (CaptureMode) -> Void
@@ -189,12 +211,25 @@ struct CaptureModeSection: View {
 
     var body: some View {
         Section {
-            Button {
-                onChoose(.lidar)
-            } label: {
-                Label("Scan with LiDAR", systemImage: "cube.transparent")
+            if lidarAvailable {
+                Button {
+                    onChoose(.lidar)
+                } label: {
+                    Label("Scan with LiDAR", systemImage: "cube.transparent")
+                }
+            } else {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("LiDAR scanning not available")
+                        Text("This iPhone has no LiDAR sensor.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
             }
-            .disabled(!lidarAvailable)
 
             Button {
                 onChoose(.cornerTap)
@@ -206,7 +241,7 @@ struct CaptureModeSection: View {
         } footer: {
             Text(lidarAvailable
                  ? "LiDAR scanning measures walls, doors, windows and furniture automatically."
-                 : "This phone has no LiDAR sensor, so rooms are mapped by tapping each floor corner. Use AI Find Items to recognize what is in each room. LiDAR scanning needs an iPhone Pro (12 Pro or newer) or iPad Pro.")
+                 : LiDARSupport.explanation)
         }
     }
 }

@@ -9,6 +9,10 @@ struct Property: Codable, Identifiable, Hashable {
     var createdAt = Date()
     var rooms: [Room] = []
     var notes: String = ""
+    // Optional so properties saved before these existed still load.
+    var customerName: String?
+    var customerEmail: String?
+    var customerPhone: String?
 
     var totalArea: Double { rooms.reduce(0) { $0 + $1.area } }
     var itemCount: Int { rooms.reduce(0) { $0 + $1.items.count } }

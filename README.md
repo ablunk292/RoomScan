@@ -12,6 +12,8 @@ iPhone app for scanning rooms, documenting what is inside, and turning walkthrou
 - **Arrange Rooms:** on the property page, drag rooms into place and turn them 90°; a room snaps to nearby walls when you let go. **Auto-align** straightens and snaps everything at once.
 - **Property page:** whole-house floor plan, total area, room list, and a shareable summary of every room.
 - **Room page:** floor plan with wall lengths and numbered item pins, measurements, existing items with their condition, customer-requested items, notes, and rename.
+- **Export All Findings** (property page): a PDF report with the house plan and a page per room, a CSV spreadsheet of every item, and a JSON data file. The JSON includes a `quote_draft` shaped like a QuoteMaster quote (a header per room, a line for each requested item or item needing repair or replacement) for the upcoming QuoteMaster integration.
+- **LiDAR check:** phones without LiDAR get a one-time notice, the LiDAR option is marked unavailable, and Settings shows whether this iPhone supports it.
 - Feet or meters in Settings. Everything is saved on the phone.
 
 ## AI item detection setup (testing)
