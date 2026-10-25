@@ -3,13 +3,17 @@ import UIKit
 
 /// A printable walkthrough report: summary and house plan first, then a page section per
 /// room with its plan, measurements and item list.
-@MainActor
 enum PDFReport {
     private static let page = CGRect(x: 0, y: 0, width: 612, height: 792)   // US Letter
     private static let margin: CGFloat = 40
     private static var contentWidth: CGFloat { page.width - margin * 2 }
 
+    @MainActor
     static func data(for property: Property, useFeet: Bool) -> Data {
+        // Floor plan pictures are drawn up front: SwiftUI only renders on the main thread.
+        let housePlan = planImage(rooms: property.rooms, showDetails: false, useFeet: useFeet, height: 360)
+        let roomPlans = property.rooms.map { planImage(rooms: [$0], showDetails: true, useFeet: useFeet, height: 280) }
+
         let renderer = UIGraphicsPDFRenderer(bounds: page)
         return renderer.pdfData { context in
             var writer = Writer(context: context)
@@ -23,7 +27,7 @@ enum PDFReport {
             writer.text("\(property.rooms.count) rooms  ·  \(Units.area(property.totalArea, feet: useFeet)) total  ·  \(property.itemCount) items  ·  \(property.requestedCount) customer requests",
                         font: .systemFont(ofSize: 12))
             writer.space(12)
-            if let plan = planImage(rooms: property.rooms, showDetails: false, useFeet: useFeet, height: 360) {
+            if let plan = housePlan {
                 writer.image(plan)
             }
             if !property.notes.isEmpty {
@@ -31,7 +35,7 @@ enum PDFReport {
                 writer.text("Notes: \(property.notes)", font: .systemFont(ofSize: 11))
             }
 
-            for room in property.rooms {
+            for (room, roomPlan) in zip(property.rooms, roomPlans) {
                 writer.newPage()
                 writer.text(room.name, font: .boldSystemFont(ofSize: 18))
                 var facts = ["Floor area \(Units.area(room.area, feet: useFeet))",
@@ -42,7 +46,7 @@ enum PDFReport {
                 let walls = room.wallLengths.enumerated().map { "Wall \($0.offset + 1): \(Units.length($0.element, feet: useFeet))" }
                 writer.text(walls.joined(separator: "   "), font: .systemFont(ofSize: 10), color: .darkGray)
                 writer.space(8)
-                if let plan = planImage(rooms: [room], showDetails: true, useFeet: useFeet, height: 280) {
+                if let plan = roomPlan {
                     writer.image(plan)
                 }
                 writer.space(8)
@@ -73,6 +77,7 @@ enum PDFReport {
     }
 
     /// Draws the same floor plan the app shows, in light colors for paper.
+    @MainActor
     private static func planImage(rooms: [Room], showDetails: Bool, useFeet: Bool, height: CGFloat) -> UIImage? {
         let view = FloorPlanView(rooms: rooms, showDetails: showDetails, useFeet: useFeet)
             .frame(width: contentWidth, height: height)
