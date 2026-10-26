@@ -75,6 +75,13 @@ struct RoomDetailView: View {
                 } label: {
                     Label("Add Customer Request", systemImage: "cart.badge.plus")
                 }
+                if !room.items.isEmpty {
+                    NavigationLink {
+                        ItemsListView(propertyID: propertyID, roomID: roomID)
+                    } label: {
+                        Label("Filter, Select or Delete Items", systemImage: "checklist")
+                    }
+                }
             } footer: {
                 Text("Existing items are already in the room. Customer requests are things the customer wants added, and they go on the quote.")
             }

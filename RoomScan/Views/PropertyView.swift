@@ -72,7 +72,11 @@ struct PropertyView: View {
                 }
                 LabeledContent("Rooms", value: "\(property.rooms.count)")
                 LabeledContent("Total floor area", value: Units.area(property.totalArea, feet: useFeet))
-                LabeledContent("Items documented", value: "\(property.itemCount)")
+                NavigationLink {
+                    ItemsListView(propertyID: propertyID, roomID: nil)
+                } label: {
+                    LabeledContent("Items documented", value: "\(property.itemCount)")
+                }
                 LabeledContent("Customer requests", value: "\(property.requestedCount)")
             } header: {
                 HStack {
