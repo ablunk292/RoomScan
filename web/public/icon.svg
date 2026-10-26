@@ -1,1 +1,37 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#2563eb"/><path d="M8 9h16v14H8z" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/><path d="M8 16h7v7" fill="none" stroke="#fff" stroke-width="2.4"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7C64D9"/>
+      <stop offset="0.55" stop-color="#4C3BC4"/>
+      <stop offset="1" stop-color="#1E1B6E"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5EEAD4" stop-opacity="0"/>
+      <stop offset="1" stop-color="#5EEAD4" stop-opacity="0.55"/>
+    </linearGradient>
+    <clipPath id="room">
+      <path d="M248 288H776V576H576V736H248Z"/>
+    </clipPath>
+    <pattern id="grid" width="88" height="88" patternUnits="userSpaceOnUse" x="248" y="288">
+      <rect x="10" y="10" width="68" height="68" rx="10" fill="#FFFFFF" fill-opacity="0.13"/>
+    </pattern>
+  </defs>
+  <rect width="1024" height="1024" rx="230" fill="url(#bg)"/>
+  <!-- scanned part of the room: grid squares and the beam -->
+  <g clip-path="url(#room)">
+    <rect x="248" y="288" width="528" height="460" fill="url(#grid)"/>
+    <rect x="248" y="380" width="528" height="140" fill="url(#beam)"/>
+  </g>
+  <line x1="200" y1="520" x2="824" y2="520" stroke="#5EEAD4" stroke-width="16" stroke-linecap="round"/>
+  <!-- floor plan outline -->
+  <path d="M248 288H776V576H576V736H248Z" fill="none" stroke="#FFFFFF" stroke-width="52" stroke-linejoin="round"/>
+  <!-- corner markers, like the yellow dots in the app -->
+  <g fill="#FACC15" stroke="#1E1B6E" stroke-width="12">
+    <circle cx="248" cy="288" r="44"/>
+    <circle cx="776" cy="288" r="44"/>
+    <circle cx="248" cy="736" r="44"/>
+  </g>
+  <!-- AI sparkle -->
+  <path d="M736 640 C748 700 760 712 820 724 C760 736 748 748 736 808 C724 748 712 736 652 724 C712 712 724 700 736 640Z" fill="#FFFFFF"/>
+  <path d="M842 596 C847 620 852 625 876 630 C852 635 847 640 842 664 C837 640 832 635 808 630 C832 625 837 620 842 596Z" fill="#FFFFFF" fill-opacity="0.85"/>
+</svg>
