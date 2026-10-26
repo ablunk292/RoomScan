@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, NavLink, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { Link, NavLink, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useWalkthrough } from '../lib/useWalkthrough';
 import { useUnits } from '../lib/units';
 import { allItems, area, formatArea } from '../lib/model';
@@ -20,7 +20,9 @@ export default function Walkthrough() {
   const [feet, setFeet] = useUnits();
   const [selection, setSelection] = useState<Selection>(null);
   const [aiOpen, setAiOpen] = useState(false);
-  const [wizardOpen, setWizardOpen] = useState(false);
+  const [params] = useSearchParams();
+  // The phone opens a walkthrough with ?quote=1 to go straight to the QuoteMaster wizard.
+  const [wizardOpen, setWizardOpen] = useState(params.get('quote') === '1');
   const [links, setLinks] = useState<Awaited<ReturnType<typeof quoteLinks>>>([]);
   const navigate = useNavigate();
 

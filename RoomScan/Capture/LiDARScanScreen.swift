@@ -207,7 +207,7 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
 
     /// Asks before leaving a room that AI Find Items has not looked at yet.
     private func remindAboutAI(leaving title: String, then leave: @escaping () -> Void) {
-        guard aiScansThisRoom == 0, APIKeyStore.hasKey else {
+        guard aiScansThisRoom == 0, AIAccess.isAvailable else {
             leave()
             return
         }

@@ -10,6 +10,8 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                AccountSection()
+
                 Section("Help") {
                     Button {
                         showingWelcome = true
@@ -43,6 +45,15 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    NavigationLink("AI Presets") { PresetListView() }
+                } header: {
+                    Text("AI item detection")
+                } footer: {
+                    Text("Presets choose what the AI looks for, like only electrical or only doors and windows.")
+                }
+
+                #if DEBUG
+                Section {
                     if hasKey {
                         LabeledContent("Claude API key", value: "Saved")
                         Button("Remove Key", role: .destructive) {
@@ -60,12 +71,12 @@ struct SettingsView: View {
                         }
                         .disabled(keyText.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
-                    NavigationLink("AI Presets") { PresetListView() }
                 } header: {
-                    Text("AI item detection")
+                    Text("Developer: Claude API key")
                 } footer: {
-                    Text("Used by AI Find Items to recognize what is in a room. Create a key at console.anthropic.com under API Keys. It is stored in this iPhone's Keychain. Each photo costs a few cents.")
+                    Text("Only in test builds. Used for AI scans when you are not signed in. Customers sign in instead and never see this.")
                 }
+                #endif
             }
             .fullScreenCover(isPresented: $showingWelcome) {
                 WelcomeView()

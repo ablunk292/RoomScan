@@ -6,8 +6,12 @@ struct PropertyView: View {
     let onAddRooms: (CaptureMode) -> Void
 
     @EnvironmentObject private var store: PropertyStore
+    @ObservedObject private var sync = CloudSync.shared
+    @Environment(\.openURL) private var openURL
     @AppStorage(Units.useFeetKey) private var useFeet = true
     @State private var showingAddRooms = false
+    @State private var sendingToQuoteMaster = false
+    @State private var askingToSignIn = false
     @State private var arranging = false
     /// Room opened by tapping it on the house plan.
     @State private var openRoom: Room.ID?
@@ -18,6 +22,22 @@ struct PropertyView: View {
     @State private var choosingExport = false
     /// Files made in the export sheet, shared once that sheet has closed.
     @State private var pendingShare: SharePayload?
+
+    /// Uploads the latest changes, then opens the walkthrough in the web app (and its quote wizard).
+    private func openOnWeb(_ property: Property, quote: Bool) async {
+        guard sync.isSignedIn else {
+            askingToSignIn = true
+            return
+        }
+        sendingToQuoteMaster = true
+        await sync.sync()
+        sendingToQuoteMaster = false
+        if let error = sync.lastError, !sync.isUploaded(property.id) {
+            exportError = error
+            return
+        }
+        openURL(sync.webURL(for: property, quote: quote))
+    }
 
     var body: some View {
         if let property = store.property(id: propertyID) {
@@ -93,8 +113,24 @@ struct PropertyView: View {
                 } label: {
                     Label("Export Findings", systemImage: "square.and.arrow.up.on.square")
                 }
+                Button {
+                    Task { await openOnWeb(property, quote: true) }
+                } label: {
+                    HStack {
+                        Label("Send to QuoteMaster", systemImage: "doc.text.magnifyingglass")
+                        if sendingToQuoteMaster { Spacer(); ProgressView() }
+                    }
+                }
+                .disabled(sendingToQuoteMaster)
+                if sync.isSignedIn {
+                    Button {
+                        Task { await openOnWeb(property, quote: false) }
+                    } label: {
+                        Label("Open on the Web", systemImage: "safari")
+                    }
+                }
             } footer: {
-                Text("Choose the rooms and findings to include. Creates a PDF report with floor plans and photos, a spreadsheet of the items, and a data file for quoting tools such as QuoteMaster.")
+                Text("Export makes a PDF report, a spreadsheet and a data file. Send to QuoteMaster syncs this walkthrough and opens a step-by-step wizard that builds a draft quote for you to review. The web version also lets you edit the floor plan and items on a computer.")
             }
 
             Section("Rooms") {
@@ -129,6 +165,11 @@ struct PropertyView: View {
             }
         }
         .navigationTitle(property.name)
+        .alert("Sign in to send quotes", isPresented: $askingToSignIn) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Sign in with your QuoteMaster account in Settings on the home screen. Then Send to QuoteMaster builds a draft quote from this walkthrough.")
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {

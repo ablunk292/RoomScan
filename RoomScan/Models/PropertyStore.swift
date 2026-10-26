@@ -7,6 +7,9 @@ final class PropertyStore: ObservableObject {
 
     private let fileURL: URL
     let modelsDirectory: URL
+    /// Told about every change made on this phone, so it can be synced (see CloudSync).
+    var onLocalChange: ((Property.ID) -> Void)?
+    var onLocalDelete: ((Property.ID) -> Void)?
 
     init() {
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -27,11 +30,31 @@ final class PropertyStore: ObservableObject {
     func add(_ property: Property) {
         properties.insert(property, at: 0)
         save()
+        onLocalChange?(property.id)
     }
 
     func update(_ property: Property) {
         guard let index = properties.firstIndex(where: { $0.id == property.id }) else { return }
         properties[index] = property
+        save()
+        onLocalChange?(property.id)
+    }
+
+    /// Puts a copy that came from the cloud in place, without marking it as changed here.
+    func applyFromCloud(_ property: Property) {
+        if let index = properties.firstIndex(where: { $0.id == property.id }) {
+            properties[index] = property
+        } else {
+            properties.insert(property, at: 0)
+        }
+        save()
+    }
+
+    /// Removes a property that was deleted on another device or on the web.
+    func removeFromCloud(_ id: Property.ID) {
+        guard let index = properties.firstIndex(where: { $0.id == id }) else { return }
+        properties[index].rooms.forEach(removeModel)
+        properties.remove(at: index)
         save()
     }
 
@@ -51,11 +74,13 @@ final class PropertyStore: ObservableObject {
     }
 
     func delete(at offsets: IndexSet) {
+        let ids = offsets.map { properties[$0].id }
         for index in offsets {
             properties[index].rooms.forEach(removeModel)
         }
         properties.remove(atOffsets: offsets)
         save()
+        ids.forEach { onLocalDelete?($0) }
     }
 
     func modelURL(for room: Room) -> URL? {

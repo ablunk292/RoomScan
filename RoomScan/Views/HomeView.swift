@@ -23,6 +23,7 @@ struct CaptureRequest: Identifiable {
 
 struct HomeView: View {
     @EnvironmentObject private var store: PropertyStore
+    @ObservedObject private var sync = CloudSync.shared
     @AppStorage(Units.useFeetKey) private var useFeet = true
     @State private var path: [Property.ID] = []
     @State private var showingNewProperty = false
@@ -39,6 +40,26 @@ struct HomeView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
+                if !sync.isSignedIn {
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Sign in with QuoteMaster").font(.headline)
+                                Text("Turns on AI item detection, backup, the web editor and quoting.")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "person.crop.circle.badge.plus")
+                        }
+                    }
+                } else if let error = sync.lastError {
+                    Label(error, systemImage: "exclamationmark.icloud")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
                 if store.properties.isEmpty {
                     VStack(spacing: 16) {
                         Image(systemName: "house.and.flag")
@@ -71,6 +92,7 @@ struct HomeView: View {
                 .onDelete { store.delete(at: $0) }
             }
             .navigationTitle("RoomScan")
+            .refreshable { await sync.sync() }
             .navigationDestination(for: Property.ID.self) { id in
                 PropertyView(propertyID: id) { mode in
                     capture = CaptureRequest(mode: mode, target: .existing(id), firstRoomName: "Room \((store.property(id: id)?.rooms.count ?? 0) + 1)")

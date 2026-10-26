@@ -130,11 +130,11 @@ struct CornerMeasureScreen: View {
                  ? "Walk back to the first corner (pulsing green) and tap Close Room, or close it now with a straight wall from the last corner."
                  : "\(roomName) needs at least 3 corners. Keep marking corners, then come back to the first one.")
         }
-        .alert("Add a Claude key to scan items", isPresented: $askingForKey) {
+        .alert("Sign in to scan items with AI", isPresented: $askingForKey) {
             Button("Pin Items by Hand") { mappedWithoutAI = true }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The AI item scan needs a Claude API key, added in Settings on the home screen. For now you can aim the + at items and tap the pin button.")
+            Text("The AI item scan needs you to sign in with your QuoteMaster account in Settings on the home screen. For now you can aim the + at items and tap the pin button.")
         }
         .confirmationDialog("Scan the items in \(roomName) first?",
                             isPresented: Binding(get: { aiReminder != nil }, set: { if !$0 { aiReminder = nil } }),
@@ -545,7 +545,7 @@ struct CornerMeasureScreen: View {
     }
 
     private func startItemScan() {
-        guard APIKeyStore.hasKey else {
+        guard AIAccess.isAvailable else {
             askingForKey = true
             return
         }
@@ -560,7 +560,7 @@ struct CornerMeasureScreen: View {
         }
         let roomInProgress = controller.corners.count >= 3
         let scanned = controller.itemScanActive && controller.currentTarget == nil
-        if roomInProgress, !scanned, !mappedWithoutAI, APIKeyStore.hasKey {
+        if roomInProgress, !scanned, !mappedWithoutAI, AIAccess.isAvailable {
             aiReminder = action
         } else {
             leave(action)

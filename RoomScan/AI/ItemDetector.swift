@@ -35,7 +35,7 @@ enum ItemDetectorError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .missingKey: return "Add your Claude API key in Settings to use AI item detection."
+        case .missingKey: return "Sign in with your QuoteMaster account in Settings to use AI item detection."
         case .badResponse(let message): return message
         case .refused: return "The AI declined to analyze this photo."
         }
@@ -44,6 +44,11 @@ enum ItemDetectorError: LocalizedError {
 
 /// Asks Claude to list everything worth documenting in a walkthrough photo.
 /// Calls the Claude Messages API directly (there is no official Swift SDK).
+/// Whether AI item detection can run: signed in to the RoomScan cloud, or a developer key is saved.
+enum AIAccess {
+    static var isAvailable: Bool { SessionStore.isSignedIn || APIKeyStore.hasKey }
+}
+
 enum ItemDetector {
     private static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
     private static let model = "claude-opus-5-5"
@@ -51,6 +56,24 @@ enum ItemDetector {
     /// `focus` limits the search to what the user asked for, such as "windows and door handles".
     /// Empty means everything worth documenting.
     static func detectItems(inJPEG jpeg: Data, roomName: String, focus: String = "") async throws -> [DetectedItem] {
+        // Signed in: the RoomScan server calls Claude, so no key is needed on the phone.
+        if SessionStore.isSignedIn {
+            do {
+                let data = try await CloudAPI.ai("detect", [
+                    "image_base64": jpeg.base64EncodedString(),
+                    "media_type": "image/jpeg",
+                    "room_name": roomName,
+                    "focus": focus,
+                ])
+                return try JSONDecoder().decode(ItemList.self, from: data).items
+            } catch CloudError.notSignedIn {
+                throw ItemDetectorError.missingKey
+            } catch let error as CloudError {
+                if case .http(422, _) = error { throw ItemDetectorError.refused }
+                throw ItemDetectorError.badResponse(error.localizedDescription)
+            }
+        }
+        // Developer testing without an account: a Claude key saved in Settings.
         guard let key = APIKeyStore.key else { throw ItemDetectorError.missingKey }
 
         var request = URLRequest(url: endpoint)
