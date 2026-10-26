@@ -60,25 +60,32 @@ struct SignInView: View {
     @State private var busy = false
     @State private var error: String?
     @State private var resetSent = false
+    @State private var providers: Set<String> = []
 
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    Button {
-                        Task { await signIn(provider: "google") }
-                    } label: {
-                        Label("Continue with Google", systemImage: "g.circle")
+                if !providers.isDisjoint(with: ["google", "azure"]) {
+                    Section {
+                        if providers.contains("google") {
+                            Button {
+                                Task { await signIn(provider: "google") }
+                            } label: {
+                                Label("Continue with Google", systemImage: "g.circle")
+                            }
+                        }
+                        if providers.contains("azure") {
+                            Button {
+                                Task { await signIn(provider: "azure") }
+                            } label: {
+                                Label("Continue with Microsoft", systemImage: "m.circle")
+                            }
+                        }
+                    } footer: {
+                        Text("Use whichever you sign in to QuoteMaster with.")
                     }
-                    Button {
-                        Task { await signIn(provider: "azure") }
-                    } label: {
-                        Label("Continue with Microsoft", systemImage: "m.circle")
-                    }
-                } footer: {
-                    Text("Use whichever you sign in to QuoteMaster with.")
+                    .disabled(busy)
                 }
-                .disabled(busy)
                 Section {
                     TextField("Email", text: $email)
                         .keyboardType(.emailAddress)
@@ -121,6 +128,7 @@ struct SignInView: View {
                     .disabled(email.isEmpty)
                 }
             }
+            .task { providers = await CloudAuthAPI.enabledProviders() }
             .navigationTitle("Sign In")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

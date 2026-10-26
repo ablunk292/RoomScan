@@ -102,6 +102,17 @@ enum CloudAuthAPI {
     static let callbackScheme = "roomscan"
     static let callbackURL = URL(string: "roomscan://auth-callback")!
 
+    /// The sign-in providers switched on in the Supabase project (Authentication → Providers),
+    /// such as "google" and "azure". Only those get a button.
+    static func enabledProviders() async -> Set<String> {
+        var request = URLRequest(url: CloudConfig.url.appendingPathComponent("auth/v1/settings"))
+        request.setValue(CloudConfig.publishableKey, forHTTPHeaderField: "apikey")
+        guard let response = try? await URLSession.shared.data(for: request),
+              let object = try? JSONSerialization.jsonObject(with: response.0) as? [String: Any],
+              let external = object["external"] as? [String: Any] else { return [] }
+        return Set(external.compactMap { ($0.value as? Bool) == true ? $0.key : nil })
+    }
+
     /// A one-time code verifier and the sign-in page for a provider ("google" or "azure"). The
     /// browser comes back with a code that `exchange(code:verifier:)` turns into a session.
     static func providerSignIn(_ provider: String) -> (url: URL, verifier: String) {

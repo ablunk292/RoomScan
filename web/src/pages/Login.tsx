@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
 export default function Login() {
@@ -7,6 +7,17 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
+  // Only offer Google / Microsoft once they are switched on in Supabase (Auth → Providers).
+  const [providers, setProviders] = useState({ google: false, azure: false });
+
+  useEffect(() => {
+    fetch(`${import.meta.env.VITE_SUPABASE_URL}/auth/v1/settings`, {
+      headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY },
+    })
+      .then((r) => r.json())
+      .then((s) => setProviders({ google: !!s?.external?.google, azure: !!s?.external?.azure }))
+      .catch(() => {});
+  }, []);
 
   const signIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,9 +49,9 @@ export default function Login() {
         <img src="/icon.svg" alt="" width={44} height={44} />
         <h1>RoomScan</h1>
         <p className="muted">Sign in with your QuoteMaster account to edit walkthroughs from the phone.</p>
-        <button type="button" className="sso" onClick={() => withProvider('google')}>Continue with Google</button>
-        <button type="button" className="sso" onClick={() => withProvider('azure')}>Continue with Microsoft</button>
-        <div className="or muted small">or with email</div>
+        {providers.google && <button type="button" className="sso" onClick={() => withProvider('google')}>Continue with Google</button>}
+        {providers.azure && <button type="button" className="sso" onClick={() => withProvider('azure')}>Continue with Microsoft</button>}
+        {(providers.google || providers.azure) && <div className="or muted small">or with email</div>}
         <label>Email<input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
         <label>Password<input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
         {error && <div className="error">{error}</div>}
