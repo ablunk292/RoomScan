@@ -51,6 +51,19 @@ final class CloudSync: ObservableObject {
 
     func signIn(email: String, password: String) async throws {
         let session = try await CloudAuthAPI.signIn(email: email.trimmingCharacters(in: .whitespaces), password: password)
+        await signedIn(session)
+    }
+
+    /// Signs in with Google or Microsoft in a browser sheet. `authenticate` is SwiftUI's
+    /// web authentication session, which returns the URL the browser came back with.
+    func signIn(provider: String, authenticate: (URL, String) async throws -> URL) async throws {
+        let start = CloudAuthAPI.providerSignIn(provider)
+        let callback = try await authenticate(start.url, CloudAuthAPI.callbackScheme)
+        let session = try await CloudAuthAPI.finishProviderSignIn(callback: callback, verifier: start.verifier)
+        await signedIn(session)
+    }
+
+    private func signedIn(_ session: CloudSession) async {
         SessionStore.save(session)
         CloudAPI.forgetTenant()
         isSignedIn = true

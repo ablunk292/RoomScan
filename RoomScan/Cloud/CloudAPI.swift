@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Security
 
@@ -94,6 +95,46 @@ enum CloudAuthAPI {
 
     static func signIn(email: String, password: String) async throws -> CloudSession {
         try await token(grant: "password", body: ["email": email, "password": password])
+    }
+
+    /// Where Supabase sends the browser back after Google or Microsoft sign-in. It must be listed
+    /// under Authentication → URL Configuration → Redirect URLs in the Supabase project.
+    static let callbackScheme = "roomscan"
+    static let callbackURL = URL(string: "roomscan://auth-callback")!
+
+    /// A one-time code verifier and the sign-in page for a provider ("google" or "azure"). The
+    /// browser comes back with a code that `exchange(code:verifier:)` turns into a session.
+    static func providerSignIn(_ provider: String) -> (url: URL, verifier: String) {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        let verifier = base64URL(Data(bytes))
+        let challenge = base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
+        var components = URLComponents(url: CloudConfig.url.appendingPathComponent("auth/v1/authorize"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "provider", value: provider),
+            URLQueryItem(name: "redirect_to", value: callbackURL.absoluteString),
+            URLQueryItem(name: "code_challenge", value: challenge),
+            URLQueryItem(name: "code_challenge_method", value: "s256"),
+        ]
+        if provider == "azure" { components.queryItems?.append(URLQueryItem(name: "scopes", value: "email")) }
+        return (components.url!, verifier)
+    }
+
+    /// Finishes a Google or Microsoft sign-in from the URL the browser came back with.
+    static func finishProviderSignIn(callback: URL, verifier: String) async throws -> CloudSession {
+        let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        if let code = items.first(where: { $0.name == "code" })?.value {
+            return try await token(grant: "pkce", body: ["auth_code": code, "code_verifier": verifier])
+        }
+        let message = items.first(where: { $0.name == "error_description" })?.value
+        throw CloudError.http(400, message ?? "Sign-in didn't finish. Try again.")
+    }
+
+    private static func base64URL(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 
     static func refresh(_ refreshToken: String) async throws -> CloudSession {

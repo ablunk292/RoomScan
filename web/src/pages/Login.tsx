@@ -17,6 +17,15 @@ export default function Login() {
     setBusy(false);
   };
 
+  const withProvider = async (provider: 'google' | 'azure') => {
+    setError('');
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo: window.location.href, scopes: provider === 'azure' ? 'email' : undefined },
+    });
+    if (error) setError(error.message);
+  };
+
   const reset = async () => {
     if (!email) { setError('Enter your email first.'); return; }
     const { error } = await supabase.auth.resetPasswordForEmail(email);
@@ -29,6 +38,9 @@ export default function Login() {
         <img src="/icon.svg" alt="" width={44} height={44} />
         <h1>RoomScan</h1>
         <p className="muted">Sign in with your QuoteMaster account to edit walkthroughs from the phone.</p>
+        <button type="button" className="sso" onClick={() => withProvider('google')}>Continue with Google</button>
+        <button type="button" className="sso" onClick={() => withProvider('azure')}>Continue with Microsoft</button>
+        <div className="or muted small">or with email</div>
         <label>Email<input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
         <label>Password<input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
         {error && <div className="error">{error}</div>}

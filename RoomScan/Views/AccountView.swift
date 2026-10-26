@@ -1,3 +1,4 @@
+import AuthenticationServices
 import SwiftUI
 
 /// Sign in with a QuoteMaster account, which syncs walkthroughs to the web editor and runs the AI
@@ -50,6 +51,7 @@ struct AccountSection: View {
 
 struct SignInView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     @State private var email = ""
     @State private var password = ""
     @State private var busy = false
@@ -60,6 +62,21 @@ struct SignInView: View {
         NavigationStack {
             Form {
                 Section {
+                    Button {
+                        Task { await signIn(provider: "google") }
+                    } label: {
+                        Label("Continue with Google", systemImage: "g.circle")
+                    }
+                    Button {
+                        Task { await signIn(provider: "azure") }
+                    } label: {
+                        Label("Continue with Microsoft", systemImage: "m.circle")
+                    }
+                } footer: {
+                    Text("Use whichever you sign in to QuoteMaster with.")
+                }
+                .disabled(busy)
+                Section {
                     TextField("Email", text: $email)
                         .keyboardType(.emailAddress)
                         .textContentType(.username)
@@ -67,6 +84,8 @@ struct SignInView: View {
                         .autocorrectionDisabled()
                     SecureField("Password", text: $password)
                         .textContentType(.password)
+                } header: {
+                    Text("Or with email")
                 } footer: {
                     Text("Use the same email and password as QuoteMaster.")
                 }
@@ -107,6 +126,22 @@ struct SignInView: View {
                 }
             }
         }
+    }
+
+    private func signIn(provider: String) async {
+        busy = true
+        error = nil
+        do {
+            try await CloudSync.shared.signIn(provider: provider) { url, scheme in
+                try await webAuthenticationSession.authenticate(using: url, callbackURLScheme: scheme)
+            }
+            dismiss()
+        } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
+            // Closed the sign-in sheet.
+        } catch {
+            self.error = error.localizedDescription
+        }
+        busy = false
     }
 
     private func signIn() async {

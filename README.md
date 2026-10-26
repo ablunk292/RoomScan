@@ -40,6 +40,16 @@ The database changes and the function's source are in the quotemaster repo (`sup
 
 In test (Debug) builds, Settings still has a developer field for a Claude API key, used only when you are not signed in. Release builds don't show it.
 
+### Google and Microsoft sign-in
+
+Both the phone and the web app offer "Continue with Google" and "Continue with Microsoft", using the
+QuoteMaster Supabase project's existing providers. Supabase only sends people back to addresses on
+its allow list, so add these under Authentication → URL Configuration → Redirect URLs:
+
+- `roomscan://auth-callback` (the iPhone app)
+- `https://roomscan-web-theta.vercel.app/**` (the web app)
+- `https://roomscan-web-*-alex-t-blunks-projects.vercel.app/**` (web previews, optional)
+
 ## Web app
 
 The web editor is in `web/` (Vite, React and TypeScript) and is hosted on Vercel as the `roomscan-web` project. To run it locally:
