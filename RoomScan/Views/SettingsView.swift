@@ -6,11 +6,12 @@ struct SettingsView: View {
     @State private var keyText = ""
     @State private var hasKey = APIKeyStore.hasKey
     @State private var showingWelcome = false
+    @State private var signingIn = false
 
     var body: some View {
         NavigationStack {
             Form {
-                AccountSection()
+                AccountSection(signingIn: $signingIn)
 
                 Section("Help") {
                     Button {
@@ -78,6 +79,7 @@ struct SettingsView: View {
                 }
                 #endif
             }
+            .sheet(isPresented: $signingIn) { SignInView() }
             .fullScreenCover(isPresented: $showingWelcome) {
                 WelcomeView()
             }

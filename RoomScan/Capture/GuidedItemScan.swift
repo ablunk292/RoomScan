@@ -6,9 +6,11 @@ import UIKit
 ///
 /// 1. Ceiling height: the user aims the + at the top of a wall, where it meets the ceiling.
 /// 2. Then a grid is laid over each wall, the ceiling and the floor. The part to scan glows
-///    orange and pulses, and an arrow points to it when it is off screen. When the + is on an
-///    orange square and the phone is held still, a photo is taken on its own and sent to the
-///    AI. Squares in view turn blue while the AI looks and green when it is done.
+///    orange and pulses, and an arrow points to the nearest orange square. When orange squares
+///    are in view and the phone is held still, a photo is taken on its own and sent to the AI.
+///    Every square the photo shows clearly turns blue while the AI looks and green when it is
+///    done, whichever part it belongs to, so a wall photo that also shows the floor counts for
+///    both.
 extension CornerMeasureController {
     enum ScanTarget: Hashable {
         case wall(Int)
@@ -79,6 +81,17 @@ extension CornerMeasureController {
 
     static let defaultCeilingHeight: Float = 2.44
     private static let cellSize: Float = 0.6
+    /// Floor and ceiling squares are bigger: from standing height one photo covers a lot of
+    /// floor, and smaller squares only meant more sweeping.
+    private static let flatCellSize: Float = 0.9
+    /// Squares further away than this are too small in the photo for the AI to see well, so
+    /// they don't count as covered.
+    private static let maxCoverDistance: Float = 4.5
+    /// How long the phone must be still before a photo is taken. Sharpness comes from the
+    /// speed limits in MotionTracker; this only stops photos mid-turn.
+    private static let steadyDelay: TimeInterval = 0.35
+    /// Photos the AI may be looking at once before the scan waits for answers.
+    private static let maxPending = 4
 
     var currentTarget: ScanTarget? {
         targetIndex < scanTargets.count ? scanTargets[targetIndex] : nil
@@ -168,7 +181,9 @@ extension CornerMeasureController {
     func captureNow() {
         guard itemScanActive, !measuringCeiling, let frame = sceneView.session.currentFrame,
               let target = currentTarget else { return }
-        capture(target, cells: visiblePendingCells(of: target, in: frame), frame: frame)
+        var shots = coveredCells(in: frame)
+        if shots[target] == nil { shots[target] = [] }
+        capture(shots, frame: frame)
     }
 
     private func removeScanNodes() {
@@ -217,7 +232,7 @@ extension CornerMeasureController {
             guard let bounds = Geometry.bounds(of: outline) else { continue }
             var cells: [ScanCell] = []
             let container = SCNNode()
-            let size = Double(Self.cellSize) * 1.2
+            let size = Double(Self.flatCellSize)
             var x = bounds.minX + size / 2
             while x < bounds.maxX {
                 var z = bounds.minY + size / 2
@@ -289,13 +304,16 @@ extension CornerMeasureController {
             return
         }
 
-        let ready = trackingIsNormal && motion.isSteady && motion.steadyTime(at: now) > 0.5 && pendingRequests < 3
+        let ready = trackingIsNormal && motion.isSteady && motion.steadyTime(at: now) > Self.steadyDelay
+            && pendingRequests < Self.maxPending
         var guidance: String
-        var capturing: (ScanTarget, [Int])?
+        var capturing = false
         var angle: Double?
 
         if let target = currentTarget {
             let name = target == .ceiling ? "the ceiling" : target == .floor ? "the floor" : target.label
+            let left = scanCells[target]?.filter { $0.state == .pending }.count ?? 0
+            let remaining = left == 1 ? "1 square left" : "\(left) squares left"
             let aimed = pointedCell(of: target, origin: origin, forward: forward)
             if let aimed {
                 showPointer(at: aimed.point, normal: aimed.normal, state: scanCells[target]?[aimed.cell].state)
@@ -304,23 +322,30 @@ extension CornerMeasureController {
             }
 
             let visible = visiblePendingCells(of: target, in: frame)
-            if let aimed, scanCells[target]?[aimed.cell].state == .pending {
+            let onPending = aimed.map { scanCells[target]?[$0.cell].state == .pending } ?? false
+            // A photo is worth taking when the + is on an orange square, or when a few are in view.
+            if onPending || visible.count >= 2 {
                 if distance(to: target, from: origin) < 0.9 {
                     guidance = "Step back from \(name) so more of it fits on screen."
                 } else if ready {
-                    guidance = "Got it…"
-                    capturing = (target, Array(Set(visible + [aimed.cell])))
+                    guidance = "Got it… \(remaining)."
+                    capturing = true
+                } else if pendingRequests >= Self.maxPending {
+                    guidance = "Hold on, the AI is catching up…"
                 } else {
-                    guidance = "Hold still on \(name)…"
+                    guidance = "Hold still on \(name)… \(remaining)."
                 }
-            } else if !visible.isEmpty {
-                guidance = "Move the + onto an orange square of \(name)."
             } else {
-                guidance = target == .ceiling
-                    ? "Tilt the phone up at the ceiling and put the + on an orange square."
-                    : target == .floor
-                    ? "Point the phone down at the floor and put the + on an orange square."
-                    : "Turn to \(name), the one glowing orange, and put the + on it."
+                switch target {
+                case .ceiling:
+                    guidance = "Tilt the phone up and sweep slowly across the ceiling, following the arrow. \(remaining)."
+                case .floor:
+                    guidance = "Tilt the phone down and sweep slowly across the floor, following the arrow. \(remaining)."
+                case .wall:
+                    guidance = visible.isEmpty
+                        ? "Turn to \(name), the one glowing orange, following the arrow."
+                        : "Follow the arrow to the last orange square of \(name)."
+                }
                 angle = screenDirection(toward: target, camera: camera)
             }
         } else {
@@ -339,8 +364,13 @@ extension CornerMeasureController {
         let roundedAngle = angle.map { ($0 * 12).rounded() / 12 }
         if roundedAngle != turnAngle { turnAngle = roundedAngle }
 
-        if let capturing {
-            capture(capturing.0, cells: capturing.1, frame: frame)
+        if capturing, let target = currentTarget {
+            var shots = coveredCells(in: frame)
+            if let aimed = pointedCell(of: target, origin: origin, forward: forward),
+               scanCells[target]?[aimed.cell].state == .pending {
+                shots[target, default: []].append(aimed.cell)
+            }
+            capture(shots, frame: frame)
         }
     }
 
@@ -412,12 +442,17 @@ extension CornerMeasureController {
         pointerNode.isHidden = false
     }
 
-    /// Direction on screen to turn toward a target that is out of view: 0 is right, π/2 is up.
+    /// Direction on screen to the orange square closest to where the phone points: 0 is right,
+    /// π/2 is up. Following it sweeps a wall, the ceiling or the floor in order instead of
+    /// jumping around.
     private func screenDirection(toward target: ScanTarget, camera: simd_float4x4) -> Double? {
         guard let cells = scanCells[target]?.filter({ $0.state == .pending }), !cells.isEmpty else { return nil }
-        let center = cells.map(\.center).reduce(SIMD3<Float>(repeating: 0), +) / Float(cells.count)
         let origin = SIMD3<Float>(camera.columns.3.x, camera.columns.3.y, camera.columns.3.z)
-        let direction = simd_normalize(center - origin)
+        let forward = simd_normalize(-SIMD3<Float>(camera.columns.2.x, camera.columns.2.y, camera.columns.2.z))
+        guard let nearest = cells.max(by: {
+            simd_dot(simd_normalize($0.center - origin), forward) < simd_dot(simd_normalize($1.center - origin), forward)
+        }) else { return nil }
+        let direction = simd_normalize(nearest.center - origin)
         // Held upright, the camera's +y axis points to the right of the screen and -x points up.
         let right = SIMD3<Float>(camera.columns.1.x, camera.columns.1.y, camera.columns.1.z)
         let up = -SIMD3<Float>(camera.columns.0.x, camera.columns.0.y, camera.columns.0.z)
@@ -429,11 +464,26 @@ extension CornerMeasureController {
 
     // MARK: Capturing
 
-    private func capture(_ target: ScanTarget, cells: [Int], frame: ARFrame) {
+    /// Squares of every part that this frame shows clearly: on screen, seen from the front and
+    /// near enough for the AI to make out what is there.
+    private func coveredCells(in frame: ARFrame) -> [ScanTarget: [Int]] {
+        var shots: [ScanTarget: [Int]] = [:]
+        for target in scanTargets {
+            let cells = visiblePendingCells(of: target, in: frame)
+            if !cells.isEmpty { shots[target] = cells }
+        }
+        return shots
+    }
+
+    private func capture(_ shots: [ScanTarget: [Int]], frame: ARFrame) {
         guard let photo = FramePhoto(frame: frame) else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         motion.steadySince = nil
-        setState(.scanning, cells: cells, of: target, onlyIf: .pending)
+        for (target, cells) in shots {
+            setState(.scanning, cells: cells, of: target, onlyIf: .pending)
+        }
+        // Named after the part being scanned, for the message when the AI answers.
+        let label = currentTarget ?? shots.keys.first ?? .floor
         pendingRequests += 1
         advanceTarget()
 
@@ -450,27 +500,32 @@ extension CornerMeasureController {
             guard let self else { return }
             self.pendingRequests -= 1
             guard session == self.scanSession else { return }
-            self.finishCapture(target, cells: cells, photo: photo, result: result)
+            self.finishCapture(label, shots: shots, photo: photo, result: result)
         }
     }
 
-    private func finishCapture(_ target: ScanTarget, cells: [Int], photo: FramePhoto, result: Result<[DetectedItem], Error>) {
+    private func finishCapture(_ label: ScanTarget, shots: [ScanTarget: [Int]], photo: FramePhoto,
+                               result: Result<[DetectedItem], Error>) {
         switch result {
         case .success(let detected):
-            setState(.done, cells: cells, of: target, onlyIf: .scanning)
-            if scanCells[target]?.allSatisfy({ $0.state == .done }) == true { targetsDone.insert(target) }
+            for (target, cells) in shots {
+                setState(.done, cells: cells, of: target, onlyIf: .scanning)
+                if scanCells[target]?.allSatisfy({ $0.state == .done }) == true { targetsDone.insert(target) }
+            }
             let added = addDetected(detected, from: photo)
             aiScansThisRoom += 1
             lastAIAdded = added
             aiMessage = added.isEmpty
-                ? "\(target.label): nothing new."
-                : "\(target.label): added \(added.count) item\(added.count == 1 ? "" : "s")."
+                ? "\(label.label): nothing new."
+                : "\(label.label): added \(added.count) item\(added.count == 1 ? "" : "s")."
             if itemScanComplete {
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                 aiMessage = "Room scanned. \(items.count) items found."
             }
         case .failure(let error):
-            setState(.pending, cells: cells, of: target, onlyIf: .scanning)
+            for (target, cells) in shots {
+                setState(.pending, cells: cells, of: target, onlyIf: .scanning)
+            }
             advanceTarget()
             lastAIAdded = []
             aiMessage = error.localizedDescription
@@ -566,7 +621,7 @@ extension CornerMeasureController {
             let cell = cells[index]
             guard cell.state == .pending else { return false }
             let toCell = cell.center - position
-            guard simd_dot(forward, toCell) > 0.3 else { return false }
+            guard simd_dot(forward, toCell) > 0.3, simd_length(toCell) < Self.maxCoverDistance else { return false }
             guard simd_dot(simd_normalize(-toCell), cell.normal) > 0.25 else { return false }
             let projected = frame.camera.projectPoint(cell.center, orientation: .portrait, viewportSize: viewport)
             return projected.x > viewport.width * 0.08 && projected.x < viewport.width * 0.92

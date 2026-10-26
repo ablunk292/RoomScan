@@ -25,6 +25,7 @@ struct CornerMeasureScreen: View {
     @State private var measuring = false
     /// Set when the user tries to leave a room whose outline is not closed yet.
     @State private var closeReminder: LeaveAction?
+    @State private var addingRequest = false
 
     private enum LeaveAction: Identifiable {
         case nextRoom
@@ -182,6 +183,24 @@ struct CornerMeasureScreen: View {
                 .buttonStyle(.bordered)
                 .tint(measuring ? Color.accentColor : nil)
                 .accessibilityLabel("Measure")
+                Button {
+                    addingRequest = true
+                } label: {
+                    let count = controller.items.filter(\.isRequested).count
+                    Image(systemName: "cart.badge.plus")
+                        .overlay(alignment: .topTrailing) {
+                            if count > 0 {
+                                Text("\(count)")
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(.white)
+                                    .padding(3)
+                                    .background(Circle().fill(.pink))
+                                    .offset(x: 10, y: -10)
+                            }
+                        }
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Add client request")
                 Spacer()
                 VStack(spacing: 0) {
                     Text(roomName).font(.headline)
@@ -206,6 +225,9 @@ struct CornerMeasureScreen: View {
         }
         .sheet(isPresented: $showingHelp) {
             ScanHelpView()
+        }
+        .sheet(isPresented: $addingRequest) {
+            ClientRequestSheet(controller: controller, roomName: roomName)
         }
         .task(id: controller.aiMessage) {
             // Each AI result shows for a few seconds, unless a newer one replaces it.

@@ -28,6 +28,7 @@ struct HomeView: View {
     @State private var path: [Property.ID] = []
     @State private var showingNewProperty = false
     @State private var showingSettings = false
+    @State private var showingSignIn = false
     @State private var capture: CaptureRequest?
     /// Chosen in the New Property sheet; opened once the sheet has finished closing,
     /// since SwiftUI cannot present a full-screen view while a sheet is dismissing.
@@ -42,7 +43,7 @@ struct HomeView: View {
             List {
                 if !sync.isSignedIn {
                     Button {
-                        showingSettings = true
+                        showingSignIn = true
                     } label: {
                         Label {
                             VStack(alignment: .leading, spacing: 2) {
@@ -116,6 +117,9 @@ struct HomeView: View {
             }
             .sheet(isPresented: $showingSettings) {
                 SettingsView()
+            }
+            .sheet(isPresented: $showingSignIn) {
+                SignInView()
             }
             .sheet(isPresented: $showingNewProperty, onDismiss: {
                 capture = nextCapture

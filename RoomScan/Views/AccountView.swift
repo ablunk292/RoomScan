@@ -3,9 +3,13 @@ import SwiftUI
 
 /// Sign in with a QuoteMaster account, which syncs walkthroughs to the web editor and runs the AI
 /// on the RoomScan server.
+///
+/// The sign-in sheet is presented by the screen that holds this section, not by the section:
+/// a sheet attached to a Form section is copied onto each of its rows, and it closes as soon as
+/// one of those rows changes.
 struct AccountSection: View {
     @ObservedObject private var sync = CloudSync.shared
-    @State private var signingIn = false
+    @Binding var signingIn: Bool
 
     var body: some View {
         Section {
@@ -45,7 +49,6 @@ struct AccountSection: View {
                  ? "Walkthroughs sync to your company's account. Edit them on a computer at \(CloudConfig.webApp.host ?? "the web") and send them to QuoteMaster."
                  : "Sign in to use AI item detection, back up your walkthroughs, edit them on a computer and send them to QuoteMaster. Walkthroughs stay on this phone either way.")
         }
-        .sheet(isPresented: $signingIn) { SignInView() }
     }
 }
 

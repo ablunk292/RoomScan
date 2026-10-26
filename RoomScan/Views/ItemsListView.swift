@@ -9,22 +9,14 @@ struct ItemsListView: View {
 
     @EnvironmentObject private var store: PropertyStore
     @State private var search = ""
-    @State private var categories: Set<String> = []
-    @State private var kind = Kind.all
-    @State private var conditions: Set<ItemCondition> = []
-    @State private var aiOnly = false
+    @State private var filter = ItemFilter()
+    @State private var loadedView = false
     @State private var selection: Set<UUID> = []
     @State private var editMode = EditMode.inactive
     @State private var confirmingDelete = false
     @State private var editing: (roomID: Room.ID, item: RoomItem)?
-
-    enum Kind: String, CaseIterable, Identifiable {
-        case all = "All"
-        case existing = "Existing"
-        case requested = "Requested"
-
-        var id: Self { self }
-    }
+    @State private var noting: QuickNote?
+    @State private var noteText = ""
 
     private struct Entry: Identifiable {
         let room: Room
@@ -36,6 +28,9 @@ struct ItemsListView: View {
         let entries = filteredEntries
         List(selection: $selection) {
             Section {
+                ItemViewBar(propertyID: propertyID, unsavedFilter: filter) { view in
+                    filter = view?.filter ?? ItemFilter()
+                }
                 filterBar
             }
             .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
@@ -61,11 +56,39 @@ struct ItemsListView: View {
                             }
                         }
                         .tag(entry.id)
+                        .swipeActions(edge: .leading) {
+                            Button {
+                                noteText = entry.item.notes
+                                noting = QuickNote(roomID: entry.room.id, item: entry.item)
+                            } label: {
+                                Label("Note", systemImage: "note.text")
+                            }
+                            .tint(.orange)
+                        }
                     }
                 }
             }
         }
         .searchable(text: $search, prompt: "Search items")
+        .onAppear {
+            // Open with the view picked for this walkthrough, once.
+            guard !loadedView else { return }
+            loadedView = true
+            filter = ItemViews.shared.view(for: propertyID)?.filter ?? ItemFilter()
+        }
+        .alert("Note for \(noting?.item.name ?? "item")",
+               isPresented: Binding(get: { noting != nil }, set: { if !$0 { noting = nil } })) {
+            TextField("Note", text: $noteText, axis: .vertical)
+            Button("Save") {
+                guard let noting else { return }
+                update(in: noting.roomID) { items in
+                    if let index = items.firstIndex(where: { $0.id == noting.item.id }) {
+                        items[index].notes = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
         .environment(\.editMode, $editMode)
         .navigationTitle(roomID.flatMap { store.room($0, in: propertyID)?.name } ?? "All Items")
         .toolbar {
@@ -122,66 +145,61 @@ struct ItemsListView: View {
                 Menu {
                     ForEach(availableCategories, id: \.self) { category in
                         Button {
-                            if categories.contains(category) { categories.remove(category) } else { categories.insert(category) }
+                            if filter.categories.contains(category) { filter.categories.remove(category) } else { filter.categories.insert(category) }
                         } label: {
-                            if categories.contains(category) {
+                            if filter.categories.contains(category) {
                                 Label(category, systemImage: "checkmark")
                             } else {
                                 Text(category)
                             }
                         }
                     }
-                    if !categories.isEmpty {
+                    if !filter.categories.isEmpty {
                         Divider()
-                        Button("Any category") { categories = [] }
+                        Button("Any category") { filter.categories = [] }
                     }
                 } label: {
-                    chip(categories.isEmpty ? "Category" : categories.count == 1 ? categories.first! : "\(categories.count) categories",
-                         active: !categories.isEmpty)
+                    chip(filter.categories.isEmpty ? "Category" : filter.categories.count == 1 ? filter.categories.first! : "\(filter.categories.count) categories",
+                         active: !filter.categories.isEmpty)
                 }
 
                 Menu {
-                    Picker("Type", selection: $kind) {
-                        ForEach(Kind.allCases) { Text($0.rawValue).tag($0) }
+                    Picker("Type", selection: $filter.kind) {
+                        ForEach(ItemFilter.Kind.allCases) { Text($0.rawValue).tag($0) }
                     }
                 } label: {
-                    chip(kind == .all ? "Existing & requested" : kind.rawValue, active: kind != .all)
+                    chip(filter.kind == .all ? "Existing & requested" : filter.kind.rawValue, active: filter.kind != .all)
                 }
 
                 Menu {
                     ForEach(ItemCondition.allCases) { condition in
                         Button {
-                            if conditions.contains(condition) { conditions.remove(condition) } else { conditions.insert(condition) }
+                            if filter.conditions.contains(condition) { filter.conditions.remove(condition) } else { filter.conditions.insert(condition) }
                         } label: {
-                            if conditions.contains(condition) {
+                            if filter.conditions.contains(condition) {
                                 Label(condition.label, systemImage: "checkmark")
                             } else {
                                 Text(condition.label)
                             }
                         }
                     }
-                    if !conditions.isEmpty {
+                    if !filter.conditions.isEmpty {
                         Divider()
-                        Button("Any condition") { conditions = [] }
+                        Button("Any condition") { filter.conditions = [] }
                     }
                 } label: {
-                    chip(conditions.isEmpty ? "Condition" : conditions.count == 1 ? conditions.first!.label : "\(conditions.count) conditions",
-                         active: !conditions.isEmpty)
+                    chip(filter.conditions.isEmpty ? "Condition" : filter.conditions.count == 1 ? filter.conditions.first!.label : "\(filter.conditions.count) conditions",
+                         active: !filter.conditions.isEmpty)
                 }
 
                 Button {
-                    aiOnly.toggle()
+                    filter.aiOnly.toggle()
                 } label: {
-                    chip("Found by AI", active: aiOnly)
+                    chip("Found by AI", active: filter.aiOnly)
                 }
 
                 if hasFilters {
-                    Button("Clear") {
-                        categories = []
-                        kind = .all
-                        conditions = []
-                        aiOnly = false
-                    }
+                    Button("Clear") { filter = ItemFilter() }
                     .font(.footnote)
                 }
             }
@@ -201,7 +219,7 @@ struct ItemsListView: View {
     }
 
     private var hasFilters: Bool {
-        !categories.isEmpty || kind != .all || !conditions.isEmpty || aiOnly
+        !filter.isEmpty
     }
 
     private var rooms: [Room] {
@@ -219,11 +237,7 @@ struct ItemsListView: View {
         let query = search.trimmingCharacters(in: .whitespaces)
         return rooms.flatMap { room in
             room.items.compactMap { item -> Entry? in
-                if !categories.isEmpty, !categories.contains(item.category) { return nil }
-                if kind == .existing, item.isRequested { return nil }
-                if kind == .requested, !item.isRequested { return nil }
-                if !conditions.isEmpty, item.isRequested || !conditions.contains(item.condition) { return nil }
-                if aiOnly, !item.detectedAutomatically { return nil }
+                if !filter.matches(item) { return nil }
                 if !query.isEmpty,
                    !item.name.localizedCaseInsensitiveContains(query),
                    !item.notes.localizedCaseInsensitiveContains(query),
@@ -262,6 +276,12 @@ struct ItemsListView: View {
                 Text(details(for: entry))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if !item.notes.isEmpty {
+                    Text(item.notes)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                }
             }
             Spacer()
             if item.detectedAutomatically {

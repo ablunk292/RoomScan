@@ -132,7 +132,7 @@ struct ScanHelpView: View {
                 }
                 Section("3. Scan the items") {
                     tip("arrow.up.to.line", "First the ceiling height: aim the + where a wall meets the ceiling and tap Set Ceiling Height.")
-                    tip("rectangle.portrait.on.rectangle.portrait", "Put the + on an orange square and hold still. Stand back so a good part of the wall fits on screen. The photo is taken for you.")
+                    tip("rectangle.portrait.on.rectangle.portrait", "Follow the arrow and hold still when orange squares are on screen. Stand back so a good part of the wall fits. The photo is taken for you, and a photo that also shows the floor or ceiling counts for those too.")
                     tip("arrow.right.circle", "If the orange part is off screen, an arrow shows which way to turn.")
                     tip("checkmark.seal", "Parts turn blue while the AI looks and green when done. Pan along the wall until it is all green.")
                     tip("tortoise", "Move slowly. If you see Slow down, the picture would be blurry.")

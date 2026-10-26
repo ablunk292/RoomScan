@@ -222,6 +222,23 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         addItem(RoomItem(name: name), at: point)
     }
 
+    /// Adds something the customer asked for. While corners are being mapped it is pinned on
+    /// the floor where the + points; during the item scan it is added without a spot, and can
+    /// be placed on the plan later.
+    func addRequest(_ item: RoomItem, pinned: Bool) {
+        var item = item
+        item.isRequested = true
+        addItem(item, at: pinned && canPinRequest ? smoothedAim : nil)
+    }
+
+    var canPinRequest: Bool { aimPoint != nil && !itemScanActive && !measureTool.isShowing }
+
+    func removeItem(_ id: UUID) {
+        if let item = items.first(where: { $0.id == id }) { ItemPhotos.delete(item.photoFileName) }
+        itemNodes.removeValue(forKey: id)?.removeFromParentNode()
+        items.removeAll { $0.id == id }
+    }
+
     /// Removes everything the last AI scan added, for when it picked up the wrong things.
     @MainActor
     func undoLastAIScan() {
@@ -254,7 +271,7 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
         var item = item
         if let position {
             item.position = Self.floorPoint(position)
-            let node = Self.makeItemMarker(detected: item.detectedAutomatically)
+            let node = Self.makeItemMarker(detected: item.detectedAutomatically, requested: item.isRequested)
             node.simdPosition = position
             sceneView.scene.rootNode.addChildNode(node)
             itemNodes[item.id] = node
@@ -486,9 +503,9 @@ final class CornerMeasureController: NSObject, ObservableObject, ARSCNViewDelega
     }
 
     /// A small ball where the item is (on a wall, the floor or furniture).
-    private static func makeItemMarker(detected: Bool) -> SCNNode {
+    private static func makeItemMarker(detected: Bool, requested: Bool = false) -> SCNNode {
         let ball = SCNSphere(radius: 0.03)
-        ball.firstMaterial?.diffuse.contents = detected ? UIColor.systemPurple : UIColor.systemTeal
+        ball.firstMaterial?.diffuse.contents = requested ? UIColor.systemPink : detected ? UIColor.systemPurple : UIColor.systemTeal
         ball.firstMaterial?.lightingModel = .constant
         return SCNNode(geometry: ball)
     }

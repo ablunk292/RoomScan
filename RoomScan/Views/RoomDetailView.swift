@@ -16,6 +16,9 @@ struct RoomDetailView: View {
     @State private var measuringNow = false
     @State private var renamingMeasurement: SavedMeasurement?
     @State private var measurementName = ""
+    @ObservedObject private var itemViews = ItemViews.shared
+    @State private var noting: QuickNote?
+    @State private var noteText = ""
 
     private struct EditingItem: Identifiable {
         let item: RoomItem
@@ -83,11 +86,23 @@ struct RoomDetailView: View {
                     }
                 }
             } footer: {
-                Text("Existing items are already in the room. Customer requests are things the customer wants added, and they go on the quote.")
+                Text("Existing items are already in the room. Customer requests are things the customer wants added, and they go on the quote. Swipe right on an item to add a quick note.")
             }
 
-            itemSection("Existing items", room: room, items: room.items.filter { !$0.isRequested })
-            itemSection("Customer requested", room: room, items: room.items.filter(\.isRequested))
+            if !room.items.isEmpty {
+                let view = itemViews.view(for: propertyID)
+                let shown = room.items.filter { view?.filter.matches($0) ?? true }
+                Section {
+                    ItemViewBar(propertyID: propertyID)
+                        .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                } footer: {
+                    if let view, shown.count < room.items.count {
+                        Text("\(view.name) hides \(room.items.count - shown.count) of \(room.items.count) items. Pick Everything to see them all.")
+                    }
+                }
+                itemSection("Existing items", room: room, items: shown.filter { !$0.isRequested })
+                itemSection("Customer requested", room: room, items: shown.filter(\.isRequested))
+            }
 
             Section("Measurements") {
                 LabeledContent("Floor area", value: Units.area(room.area, feet: useFeet))
@@ -186,6 +201,16 @@ struct RoomDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+        .alert("Note for \(noting?.item.name ?? "item")",
+               isPresented: Binding(get: { noting != nil }, set: { if !$0 { noting = nil } })) {
+            TextField("Note", text: $noteText, axis: .vertical)
+            Button("Save") {
+                guard let noting, var item = store.room(roomID, in: propertyID)?.item(noting.item.id) else { return }
+                item.notes = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+                save(item, in: roomID)
+            }
+            Button("Cancel", role: .cancel) {}
+        }
         .alert("Rename room", isPresented: $renaming) {
             TextField("Room name", text: $newName)
             Button("Save") {
@@ -220,6 +245,15 @@ struct RoomDetailView: View {
                     }
                     .foregroundStyle(.primary)
                     .padding(.leading, CGFloat(entry.depth) * 24)
+                    .swipeActions(edge: .leading) {
+                        Button {
+                            noteText = entry.item.notes
+                            noting = QuickNote(roomID: room.id, item: entry.item)
+                        } label: {
+                            Label("Note", systemImage: "note.text")
+                        }
+                        .tint(.orange)
+                    }
                 }
             }
         }
@@ -272,6 +306,12 @@ private struct ItemRow: View {
                 Text(details)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if !item.notes.isEmpty {
+                    Text(item.notes)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                }
             }
             Spacer()
             if let photo = ItemPhotos.image(named: item.photoFileName) {
