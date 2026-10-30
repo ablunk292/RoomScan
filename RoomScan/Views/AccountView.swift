@@ -1,0 +1,171 @@
+import AuthenticationServices
+import SwiftUI
+
+/// Sign in with a QuoteMaster account, which syncs walkthroughs to the web editor and runs the AI
+/// on the RoomScan server.
+///
+/// The sign-in sheet is presented by the screen that holds this section, not by the section:
+/// a sheet attached to a Form section is copied onto each of its rows, and it closes as soon as
+/// one of those rows changes.
+struct AccountSection: View {
+    @ObservedObject private var sync = CloudSync.shared
+    @Binding var signingIn: Bool
+
+    var body: some View {
+        Section {
+            if sync.isSignedIn {
+                LabeledContent("Signed in as", value: sync.email)
+                LabeledContent("Last synced") {
+                    if sync.isSyncing {
+                        ProgressView()
+                    } else {
+                        Text(sync.lastSynced.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "Not yet")
+                    }
+                }
+                if let error = sync.lastError {
+                    Text(error).font(.footnote).foregroundStyle(.red)
+                }
+                Button {
+                    Task { await sync.sync() }
+                } label: {
+                    Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(sync.isSyncing)
+                Link(destination: CloudConfig.webApp) {
+                    Label("Open RoomScan on the Web", systemImage: "safari")
+                }
+                Button("Sign Out", role: .destructive) { sync.signOut() }
+            } else {
+                Button {
+                    signingIn = true
+                } label: {
+                    Label("Sign In with QuoteMaster", systemImage: "person.crop.circle")
+                }
+            }
+        } header: {
+            Text("Account")
+        } footer: {
+            Text(sync.isSignedIn
+                 ? "Walkthroughs sync to your company's account. Edit them on a computer at \(CloudConfig.webApp.host ?? "the web") and send them to QuoteMaster."
+                 : "Sign in to use AI item detection, back up your walkthroughs, edit them on a computer and send them to QuoteMaster. Walkthroughs stay on this phone either way.")
+        }
+    }
+}
+
+struct SignInView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.webAuthenticationSession) private var webAuthenticationSession
+    @State private var email = ""
+    @State private var password = ""
+    @State private var busy = false
+    @State private var error: String?
+    @State private var resetSent = false
+    @State private var providers: Set<String> = []
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if !providers.isDisjoint(with: ["google", "azure"]) {
+                    Section {
+                        if providers.contains("google") {
+                            Button {
+                                Task { await signIn(provider: "google") }
+                            } label: {
+                                Label("Continue with Google", systemImage: "g.circle")
+                            }
+                        }
+                        if providers.contains("azure") {
+                            Button {
+                                Task { await signIn(provider: "azure") }
+                            } label: {
+                                Label("Continue with Microsoft", systemImage: "m.circle")
+                            }
+                        }
+                    } footer: {
+                        Text("Use whichever you sign in to QuoteMaster with.")
+                    }
+                    .disabled(busy)
+                }
+                Section {
+                    TextField("Email", text: $email)
+                        .keyboardType(.emailAddress)
+                        .textContentType(.username)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    SecureField("Password", text: $password)
+                        .textContentType(.password)
+                } header: {
+                    Text("Or with email")
+                } footer: {
+                    Text("Use the same email and password as QuoteMaster.")
+                }
+                if let error {
+                    Text(error).foregroundStyle(.red)
+                }
+                if resetSent {
+                    Text("Check your email for a link to reset your password.").foregroundStyle(.green)
+                }
+                Section {
+                    Button {
+                        Task { await signIn() }
+                    } label: {
+                        HStack {
+                            Text("Sign In").font(.headline)
+                            if busy { Spacer(); ProgressView() }
+                        }
+                    }
+                    .disabled(busy || email.isEmpty || password.isEmpty)
+                    Button("Forgot Password?") {
+                        Task {
+                            do {
+                                try await CloudAuthAPI.resetPassword(email: email)
+                                resetSent = true
+                            } catch {
+                                self.error = error.localizedDescription
+                            }
+                        }
+                    }
+                    .disabled(email.isEmpty)
+                }
+            }
+            .task { providers = await CloudAuthAPI.enabledProviders() }
+            .navigationTitle("Sign In")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func signIn(provider: String) async {
+        busy = true
+        error = nil
+        do {
+            try await CloudSync.shared.signIn(provider: provider) { url, scheme in
+                try await webAuthenticationSession.authenticate(using: url, callbackURLScheme: scheme)
+            }
+            dismiss()
+        } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
+            // Closed the sign-in sheet.
+        } catch {
+            self.error = error.localizedDescription
+        }
+        busy = false
+    }
+
+    private func signIn() async {
+        busy = true
+        error = nil
+        do {
+            try await CloudSync.shared.signIn(email: email, password: password)
+            dismiss()
+        } catch CloudError.http(let status, _) where status == 400 {
+            error = "That email and password didn't match a QuoteMaster account."
+        } catch {
+            self.error = error.localizedDescription
+        }
+        busy = false
+    }
+}
