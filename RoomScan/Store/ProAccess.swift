@@ -34,7 +34,7 @@ final class ProAccess: ObservableObject {
         guard updates == nil else { return }
         // Renewals, refunds, and purchases approved later (Ask to Buy) arrive here.
         updates = Task { [weak self] in
-            for await result in Transaction.updates {
+            for await result in StoreKit.Transaction.updates {
                 guard case .verified(let transaction) = result else { continue }
                 await self?.report(transaction)
                 await transaction.finish()
@@ -64,7 +64,7 @@ final class ProAccess: ObservableObject {
             expiresAt = nil
             return
         }
-        for await result in Transaction.currentEntitlements {
+        for await result in StoreKit.Transaction.currentEntitlements {
             if case .verified(let transaction) = result, Self.productIDs.contains(transaction.productID) {
                 await report(transaction)
             }
@@ -138,7 +138,7 @@ final class ProAccess: ObservableObject {
         expiresAt = answer.expires_at.flatMap { ISO8601DateFormatter.withFractions.date(from: $0) ?? ISO8601DateFormatter().date(from: $0) }
     }
 
-    private func report(_ transaction: Transaction) async {
+    private func report(_ transaction: StoreKit.Transaction) async {
         guard SessionStore.isSignedIn, Self.productIDs.contains(transaction.productID) else { return }
         #if DEBUG
         if transaction.environment == .xcode { return }
@@ -152,7 +152,7 @@ final class ProAccess: ObservableObject {
 
     #if DEBUG
     private func hasLocalTestPurchase() async -> Bool {
-        for await result in Transaction.currentEntitlements {
+        for await result in StoreKit.Transaction.currentEntitlements {
             if case .verified(let transaction) = result, transaction.environment == .xcode,
                Self.productIDs.contains(transaction.productID) {
                 return true
