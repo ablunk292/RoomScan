@@ -7,11 +7,12 @@ struct SettingsView: View {
     @State private var hasKey = APIKeyStore.hasKey
     @State private var showingWelcome = false
     @State private var signingIn = false
+    @State private var showingPro = false
 
     var body: some View {
         NavigationStack {
             Form {
-                AccountSection(signingIn: $signingIn)
+                AccountSection(signingIn: $signingIn, showingPro: $showingPro)
 
                 Section("Help") {
                     Button {
@@ -80,6 +81,7 @@ struct SettingsView: View {
                 #endif
             }
             .sheet(isPresented: $signingIn) { SignInView() }
+            .sheet(isPresented: $showingPro) { ProPaywallView() }
             .fullScreenCover(isPresented: $showingWelcome) {
                 WelcomeView()
             }

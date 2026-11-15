@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Link, Route, Routes } from 'react-router-dom';
+import { Link, Route, Routes, useLocation } from 'react-router-dom';
 import type { Session } from '@supabase/supabase-js';
 import { supabase, clearTenantCache, currentTenantId } from './lib/supabase';
 import Login from './pages/Login';
 import Walkthroughs from './pages/Walkthroughs';
 import Walkthrough from './pages/Walkthrough';
+import Privacy from './pages/Privacy';
 
 export default function App() {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [hasCompany, setHasCompany] = useState(true);
+  const location = useLocation();
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -23,6 +25,7 @@ export default function App() {
     if (session) currentTenantId().then((id) => setHasCompany(!!id));
   }, [session]);
 
+  if (location.pathname === '/privacy') return <Privacy />;
   if (session === undefined) return <div className="center muted">Loading…</div>;
   if (!session) return <Login />;
 

@@ -12,6 +12,7 @@ struct PropertyView: View {
     @State private var showingAddRooms = false
     @State private var sendingToQuoteMaster = false
     @State private var askingToSignIn = false
+    @State private var showingPro = false
     @State private var arranging = false
     /// Room opened by tapping it on the house plan.
     @State private var openRoom: Room.ID?
@@ -27,6 +28,10 @@ struct PropertyView: View {
     private func openOnWeb(_ property: Property, quote: Bool) async {
         guard sync.isSignedIn else {
             askingToSignIn = true
+            return
+        }
+        if quote, !ProAccess.shared.hasAccess {
+            showingPro = true
             return
         }
         sendingToQuoteMaster = true
@@ -200,6 +205,7 @@ struct PropertyView: View {
                 export(chosen, options: options)
             }
         }
+        .sheet(isPresented: $showingPro) { ProPaywallView() }
         .sheet(item: $sharing) { payload in
             ShareSheet(items: payload.urls)
         }

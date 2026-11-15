@@ -266,3 +266,5 @@ label.narrow { flex: 0 0 90px; }
   .card { border: none; }
   .report { padding: 0; }
 }
+.privacy { max-width: 720px; line-height: 1.55; }
+.privacy h2 { margin-top: 1.6em; font-size: 1.1rem; }
