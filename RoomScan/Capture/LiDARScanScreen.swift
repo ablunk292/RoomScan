@@ -230,6 +230,10 @@ final class LiDARScanViewController: UIViewController, RoomCaptureViewDelegate {
     }
 
     @objc private func aiTapped() {
+        guard ProAccess.shared.hasAccess else {
+            present(UIHostingController(rootView: ProPaywallView()), animated: true)
+            return
+        }
         guard !isAnalyzing, let frame = arSession.currentFrame, let photo = FramePhoto(frame: frame) else { return }
         isAnalyzing = true
         aiButton.configuration?.showsActivityIndicator = true

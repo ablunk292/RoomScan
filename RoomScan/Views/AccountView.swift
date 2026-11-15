@@ -9,7 +9,9 @@ import SwiftUI
 /// one of those rows changes.
 struct AccountSection: View {
     @ObservedObject private var sync = CloudSync.shared
+    @ObservedObject private var pro = ProAccess.shared
     @Binding var signingIn: Bool
+    @Binding var showingPro: Bool
 
     var body: some View {
         Section {
@@ -33,6 +35,20 @@ struct AccountSection: View {
                 .disabled(sync.isSyncing)
                 Link(destination: CloudConfig.webApp) {
                     Label("Open RoomScan on the Web", systemImage: "safari")
+                }
+                if pro.isActive {
+                    LabeledContent("RoomScan Pro", value: pro.source == "quotemaster" ? "Included with QuoteMaster" : "Active")
+                    if pro.source == "app_store" {
+                        Link(destination: URL(string: "https://apps.apple.com/account/subscriptions")!) {
+                            Label("Manage Subscription", systemImage: "creditcard")
+                        }
+                    }
+                } else {
+                    Button {
+                        showingPro = true
+                    } label: {
+                        Label("Get RoomScan Pro", systemImage: "sparkles")
+                    }
                 }
                 Button("Sign Out", role: .destructive) { sync.signOut() }
             } else {

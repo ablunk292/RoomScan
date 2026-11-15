@@ -65,6 +65,7 @@ final class CloudSync: ObservableObject {
 
     private func signedIn(_ session: CloudSession) async {
         SessionStore.save(session)
+        Task { await ProAccess.shared.refresh() }
         CloudAPI.forgetTenant()
         isSignedIn = true
         self.email = session.email
@@ -87,6 +88,7 @@ final class CloudSync: ObservableObject {
         // A different account later starts fresh; the walkthroughs stay on the phone.
         state = [:]
         saveState()
+        Task { await ProAccess.shared.refresh() }
     }
 
     // MARK: Changes on this phone

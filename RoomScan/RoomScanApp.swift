@@ -9,12 +9,18 @@ struct RoomScanApp: App {
         WindowGroup {
             HomeView()
                 .environmentObject(store)
-                .onAppear { CloudSync.shared.attach(store) }
+                .onAppear {
+                    CloudSync.shared.attach(store)
+                    ProAccess.shared.start()
+                }
         }
         .onChange(of: scenePhase) {
             // Pick up changes made on the web when the app comes back, and send ours when it leaves.
             if scenePhase == .active || scenePhase == .background {
                 Task { await CloudSync.shared.sync() }
+            }
+            if scenePhase == .active {
+                Task { await ProAccess.shared.refresh() }
             }
         }
     }

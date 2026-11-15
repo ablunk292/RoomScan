@@ -26,6 +26,7 @@ struct CornerMeasureScreen: View {
     /// Set when the user tries to leave a room whose outline is not closed yet.
     @State private var closeReminder: LeaveAction?
     @State private var addingRequest = false
+    @State private var showingPro = false
 
     private enum LeaveAction: Identifiable {
         case nextRoom
@@ -226,6 +227,7 @@ struct CornerMeasureScreen: View {
         .sheet(isPresented: $showingHelp) {
             ScanHelpView()
         }
+        .sheet(isPresented: $showingPro) { ProPaywallView() }
         .sheet(isPresented: $addingRequest) {
             ClientRequestSheet(controller: controller, roomName: roomName)
         }
@@ -569,6 +571,10 @@ struct CornerMeasureScreen: View {
     private func startItemScan() {
         guard AIAccess.isAvailable else {
             askingForKey = true
+            return
+        }
+        guard ProAccess.shared.hasAccess else {
+            showingPro = true
             return
         }
         controller.startItemScan(roomName: roomName)
